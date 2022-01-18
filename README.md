@@ -67,3 +67,69 @@ MEMBER01.domain.com           aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
 CENTOS701                     aaaaaaaa-0000-0000-0000-ffffffffffff
 CFYADMIN.domain.com           aaaaaaaa-0000-0000-0000-gggggggggggg
 ```
+
+### Get-PlatformObjectUuid
+
+This function enables you to retrieve the Uuid of a specified Platform object.
+
+#### Syntax
+```
+PS:> Get-PlatformObjectUuid [-Type] <string> [-Name] <string> [<CommonParameters>]
+```
+ - Type - The type of the object. Currently only "Secret" and "Set" is supported.
+   - for example: "Secret"
+ - Name - The name of the object to get.
+
+#### Example
+```
+PS:> Get-PlatformObjectUuid -Type Secret -Name FileSecret1
+aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
+````
+
+### Convert-PermissionToString
+
+This function enables you to convert a permission-based Grant integer to a human-readable string.
+
+#### Syntax
+```
+PS:> Convert-PermissionToString [-Type] <string> [-PermissionInt] <Int32> [<CommonParameters>]
+```
+ - Type - The type of the object. Currently only "Secret" is supported.
+   - for example: "Secret"
+ - PermissionInt - The Grant integer number to convert to human-readable format.
+
+#### Example
+```
+PS:> Convert-PermissionToString -Type Secret -PermissionInt 65613
+DeleteSecret|RetrieveSecret|EditSecret|ViewSecret|GrantSecret
+````
+
+### Get-PlatformRowAce
+
+This function enables you to get all RowAces for a specified platform object.
+It is advisable to convert this output to JSON before exporting to a file.
+
+#### Syntax
+```
+PS:> Get-PlatformRowAce [-Type] <string> [-Name] <string> [<CommonParameters>]
+```
+ - Type - The type of the object. Currently only "Secret" is supported.
+   - for example: "Secret"
+ - Name - The name of the object to get.
+
+#### Example
+```
+PS:> Get-PlatformRowAce -Type Secret -Name FileSecret1
+
+PrincipalType      : User
+PrincipalUuid      : aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+PrincipalName      : serviceuser@domain
+AceID              : aaaaaaaa-aaaa-aaaa-bbbb-aaaaaaaaaaaa
+PlatformPermission : PlatformPermission
+
+PrincipalType      : User
+PrincipalUuid      : cccccccc-cccc-cccc-cccc-cccccccccccc
+PrincipalName      : cloudadmin@domain
+AceID              : cccccccc-cccc-cccc-dddd-cccccccccccc
+PlatformPermission : PlatformPermission
+````
