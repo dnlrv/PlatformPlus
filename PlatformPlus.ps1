@@ -123,6 +123,55 @@ function global:Query-VaultRedRock
 #endregion
 ###########
 
+###########
+#region ### global:Get-PlatformObjectUuid # Gets the Platform Uuid for the specified object
+###########
+function global:Get-PlatformObjectUuid
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The type of object to search.")]
+        [System.String]$Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the object to search.")]
+        [System.String]$Name
+    )
+
+    # variables for the table, id, and name attributes
+    [System.String]$tablename  = ""
+    [System.String]$idname     = ""
+    [System.String]$columnname = ""
+
+    # switch to change the sqlquery based on the type of object
+    switch ($Type)
+    {
+        "Secret" { $tablename = "DataVault"; $idname = "ID"; $columnname = "SecretName"; break }
+        "Set"    { $tablename = "Sets"     ; $idname = "ID"; $columnname = "Name"      ; break }
+    }
+
+    # setting the SQL query string
+    $sqlquery = ("SELECT {0}.{1} FROM {0} WHERE {0}.{2} = '{3}'" -f $tablename, $idname, $columnname, $Name)
+
+    Write-Verbose ("SQLQuery: [{0}] " -f $sqlquery)
+
+    # making the query
+    $Uuid = Query-VaultRedRock -SqlQuery $sqlquery | Select-Object -ExpandProperty Id
+
+    # returning just the Uuid
+    return $Uuid
+}# global:Get-PlatformObjectUuid
+#endregion
+###########
+
+###########
+#region ### global:TEMPLATE # TEMPLATE
+###########
+#function global:Invoke-TEMPLATE
+#{
+#}# function global:Invoke-TEMPLATE
+#endregion
+###########
+
 #######################################
 #endregion ############################
 #######################################
