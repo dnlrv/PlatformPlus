@@ -3,6 +3,13 @@ PlatformPlus is an enhancement script to the Centrify Platform PowerShell module
 
 The intent is to add ease of use with certain queries when working directly with a Centrify tenant once you are authenticated.
 
+## Installation
+
+To install the script via the command line, run the following:
+```
+(Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dnlrv/PlatformPlus/main/PlatformPlus.ps1').Content | Out-File .\PlatformPlus.ps1
+```
+
 ## Requirements
 
 This script has a few requirements:
