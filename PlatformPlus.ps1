@@ -84,7 +84,7 @@ function global:Invoke-PlatformAPI
     {
         Throw $_.Exception
     }
-}# function global:Invoke-PlatformAPI
+}# function global:Invoke-PlatformAPI 
 #endregion
 ###########
 
