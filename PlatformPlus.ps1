@@ -157,6 +157,12 @@ function global:Get-PlatformObjectUuid
     # making the query
     $Uuid = Query-VaultRedRock -SqlQuery $sqlquery | Select-Object -ExpandProperty Id
 
+    # warning if multiple Uuids are returned
+    if ($uuid.Count -gt 1)
+    {
+        Write-Warning ("Multiple Uuids returned!")
+    }
+
     # returning just the Uuid
     return $Uuid
 }# global:Get-PlatformObjectUuid
@@ -195,12 +201,11 @@ function global:Convert-PermissionToString
             # add the key to our return string
             $ReturnValue += $bit.Key + "|"
         }
-    }
+    }# foreach ($bit in ($AceHash.GetEnumerator() | Sort-Object))
 
     # return the string, removing the trailing "|"
     return ($ReturnValue.TrimEnd("|"))
-}
-#}# global:Convert-PermissionToString
+}# global:Convert-PermissionToString
 #endregion
 ###########
 
@@ -214,12 +219,19 @@ function global:Get-PlatformRowAce
         [Parameter(Mandatory = $true, HelpMessage = "The type of object to search.")]
         [System.String]$Type,
 
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the object to search.")]
-        [System.String]$Name
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the object to search.", ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the object to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
     )
 
-    # getting the uuid of the object
-    $uuid = Get-PlatformObjectUuid -Type $Type -Name $Name
+    # if the Name parameter was used
+    if ($PSBoundParameters.ContainsKey("Name"))
+    {
+        # getting the uuid of the object
+        $uuid = Get-PlatformObjectUuid -Type $Type -Name $Name
+    }
 
     # setting the table variable
     [System.String]$table = ""
@@ -266,6 +278,39 @@ function global:Get-PlatformRowAce
 ###########
 
 ###########
+#region ### global:Get-PlatformSecret # Gets a PlatformSecret object from the tenant
+###########
+function global:Get-PlatformSecret
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the secret to search.",ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # if the Name parameter was used
+    if ($PSBoundParameters.ContainsKey("Name"))
+    {
+        # getting the uuid of the object
+        $uuid = Get-PlatformObjectUuid -Type Secret -Name $Name
+    }
+
+    # getting the secret information
+    $secretinfo = Query-VaultRedRock -SQLQuery ("SELECT * FROM DataVault WHERE ID = '{0}'" -f $uuid)
+
+    # creating the PlatformSecret object
+    $obj = [PlatformSecret]::new($secretinfo)
+
+    # returning that object
+    return $obj
+}# lobal:Get-PlatformSecret
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -297,7 +342,7 @@ class PlatformPermission
         $this.GrantInt    = $gi
         $this.GrantBinary = $gb
         $this.GrantString = Convert-PermissionToString -Type $t -PermissionInt $gi
-    }
+    }# PlatformPermission ([System.String]$t, [System.Int64]$gi, [System.String]$gb)
 }# class PlatformPermission
 
 # class for holding RowAce information
@@ -317,8 +362,98 @@ class PlatformRowAce
         $this.PrincipalName      = $pn
         $this.AceId              = $aid
         $this.PlatformPermission = $pp
-    }
-}# PlatformRowAce
+    }# PlatformRowAce([System.String]$pt, [System.String]$puuid, [System.String]$pn, `
+}# class PlatformRowAce
+
+# class for holding Secret information
+class PlatformSecret
+{
+    [System.String]$Name            # the name of the Secret
+    [System.String]$Type            # the type of Secret
+    [System.String]$ParentPath      # the Path of the Secret
+    [System.String]$Description     # the description 
+    [System.String]$ID              # the ID of the Secret
+    [System.String]$FolderId        # the FolderID of the Secret
+    [System.DateTime]$whenCreated   # when the Secret was created
+    [System.DateTime]$whenModified  # when the Secret was last modified
+    [System.String]$SecretText      # (Text Secrets) The contents of the Text Secret
+    [System.String]$SecretFileName  # (File Secrets) The file name of the Secret
+    [System.String]$SecretFileSize  # (File Secrets) The file size of the Secret
+    [System.String]$SecretFilePath  # (File Secrets) The download FilePath for this Secret
+    [PlatformRowAce[]]$RowAces      # The RowAces (Permissions) of this Secret
+
+    PlatformSecret ($secretinfo)
+    {
+        $this.Name = $secretinfo.SecretName
+        $this.Type = $secretinfo.Type
+        $this.ParentPath = $secretinfo.ParentPath
+        $this.Description = $secretinfo.Description
+        $this.ID = $secretinfo.ID
+        $this.FolderId = $secretinfo.FolderId
+        $this.whenCreated = $secretinfo.whenCreated
+        
+        # if the secret has been updated
+        if ($secretinfo.WhenContentsReplaced -ne $null)
+        {
+            # also update the whenModified property
+            $this.whenModified = $secretinfo.WhenContentsReplaced
+        }
+
+        # if the ParentPath is blank (root folder)
+        if ([System.String]::IsNullOrEmpty($this.ParentPath))
+        {
+            $this.ParentPath = "."
+        }
+
+        # if this is a File secret, fill in the relevant file parts
+        if ($this.Type -eq "File")
+        {
+            $this.SecretFileName = $secretinfo.SecretFileName
+            $this.SecretFileSize = $secretinfo.SecretFileSize
+        }
+
+        # getting the RowAces for this secret
+        $this.RowAces = Get-PlatformRowAce -Type Secret -Uuid $this.ID
+    }# PlatformSecret ($secretinfo)
+
+    # method to retrieve secret content
+    RetrieveSecret()
+    {
+        Switch ($this.Type)
+        {
+            "Text" # Text secrets will add the Secret Contets to the SecretText property
+            {
+                $this.SecretText = Invoke-PlatformAPI -APICall ServerManage/RetrieveSecretContents -Body (@{ ID = $this.ID } | ConvertTo-Json) `
+                    | Select-Object -ExpandProperty SecretText
+                break
+            }
+            "File" # File secrets will prepare the FileDownloadUrl for the Export
+            {
+                $this.SecretFilePath = Invoke-PlatformAPI -APICall ServerManage/RequestSecretDownloadUrl -Body (@{ secretID = $this.ID } | ConvertTo-Json) `
+                    | Select-Object -ExpandProperty Location
+                break
+            }
+        }# Switch ($this.Type)
+    }# RetrieveSecret()
+
+    # method to export secret content to files
+    ExportSecret()
+    {
+        Switch ($this.Type)
+        {
+            "Text" # Text secrets will be created as a .txt file
+            {
+                $this.SecretText | Out-File -FilePath ("{0}\{1}.txt" -f $this.ParentPath, $this.Name)
+                break
+            }
+            "File" # File secrets will be created as their current file name
+            {
+                Invoke-RestMethod -Method Get -Uri $this.SecretFilePath -OutFile ("{0}\{1}" -f $this.ParentPath, $this.SecretFileName) @global:SessionInformation
+                break
+            }
+        }# Switch ($this.Type)
+    }# ExportSecret()
+}# class PlatformSecret
 
 #######################################
 #endregion ############################
