@@ -67,3 +67,56 @@ MEMBER01.domain.com           aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
 CENTOS701                     aaaaaaaa-0000-0000-0000-ffffffffffff
 CFYADMIN.domain.com           aaaaaaaa-0000-0000-0000-gggggggggggg
 ```
+
+### Get-PlatformSecret
+
+This function enables you to get a new PlatformSecret object from the tenant.
+
+#### Syntax
+```
+PS:> Get-PlatformSecret [-Name] <string>  [<CommonParameters>]
+
+OR 
+
+PS:> Get-PlatformSecret [-Uuid] <string>  [<CommonParameters>]
+```
+ - Name - The name of the Secret to get.
+   - for example: "TextSecret1"
+ - Uuid - The Uuid of the Secret to get.
+   - for example: "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
+     - this version would always return only one Secret.
+
+#### Example
+```
+PS:> Get-PlatformSecret -Name TextSecret2
+
+Name           : TextSecret2
+Type           : Text
+ParentPath     : .
+Description    : Descript2
+ID             : aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
+FolderId       :
+whenCreated    : 2/11/2021 7:40:42 PM
+whenModified   : 1/19/2022 6:16:43 PM
+SecretText     :
+SecretFileName :
+SecretFileSize :
+SecretFilePath :
+RowAces        : {cloudadmin@domain}
+```
+
+#### Output
+
+Get-PlatformSecret produces a new PlatformSecret object which has two relevant methods:
+
+##### RetrieveSecret()
+
+For Text Secrets, this will retrieve the contents of the Text Secret and store it in the SecretText member property.
+
+For File Secrets, this will retrieve the special FileDownloadUrl needed to download the file and store that URL in the SecretFilePath member property.
+
+##### ExportSecret()
+
+For Text Secrets, this will export the contents of the SecretText member property into a .txt file with the same name as the Secret, in the directory that it exists currently according to the ParentPath.
+
+For File Secrets, this will download the Secret File in the directory that it exists currently according to the ParentPath.
