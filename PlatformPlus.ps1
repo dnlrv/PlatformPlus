@@ -311,6 +311,141 @@ function global:Get-PlatformSecret
 ###########
 
 ###########
+#region ### global:Get-PlatformWorkflowApprover # Queries a user or role for their Workflow Approver format
+###########
+function global:Get-PlatformWorkflowApprover
+{
+    [CmdletBinding(DefaultParameterSetName="Role")]
+    param
+    (
+		[Parameter(Mandatory = $true, HelpMessage = "The user to query.", ParameterSetName="User")]
+		[System.String]$User,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The role to query.", ParameterSetName="Role")]
+        [System.String]$Role
+
+    )
+
+    # User was selected
+    if ($PSBoundParameters.ContainsKey("User"))
+    {
+        # prepare the SQL query
+        $query = ('SELECT DsUsers.DirectoryServiceUuid, DsUsers.DisplayName, DsUsers.DistinguishedName, DsUsers.EMail, DsUsers.Enabled, DsUsers.InternalName, DsUsers.Locked, DsUsers.ObjectType, DsUsers.ObjectType AS Type, DsUsers.ServiceInstance, DsUsers.ServiceInstanceLocalized, DsUsers.ServiceType, DsUsers.Status, DsUsers.StatusEnum, DsUsers.SystemName, User.ID AS Guid, User.Username AS Name, User.Username AS Principal FROM DsUsers JOIN User ON DsUsers.InternalName = User.ID WHERE User.Username = "{0}"' -f $user)
+
+        # make the SQL query
+        $approver = Query-VaultRedRock -SQLQuery $query
+
+        # adding a property of PType, setting it same as the ObjectType
+        $approver | Add-Member -MemberType NoteProperty -Name PType -Value $sqlquery.ObjectType
+    }# if ($PSBoundParameters.ContainsKey("User"))
+    else # A role was queried
+    {
+        if ($role -eq "sysadmin" -or $role -eq "System Administrator")
+        {
+            # prepare the SQL query
+            $query = ('SELECT Role.Description,Role.DirectoryServiceUuid,Role.ID AS _ID,Role.ID AS Guid,Role.Name,Role.Name AS Principal,Role.ReadOnly,Role.RoleType FROM Role WHERE Role.Name = "System Administrator"')
+        }
+        else
+        {
+            # prepare the SQL query
+            $query = ('SELECT Role.Description,Role.DirectoryServiceUuid,Role.ID AS _ID,Role.ID AS Guid,Role.Name,Role.Name AS Principal,Role.ReadOnly,Role.RoleType FROM Role WHERE Role.Name = "{0}"' -f $role)
+        }
+       
+        # make the SQL query
+        $approver = Query-VaultRedRock -SQLQuery $query
+
+        # adding relevant Workflow properties
+        $approver | Add-Member -MemberType NoteProperty -Name Type       -Value "Role"
+        $approver | Add-Member -MemberType NoteProperty -Name PType      -Value "Role"
+        $approver | Add-Member -MemberType NoteProperty -Name ObjectType -Value "Role"
+
+        # adding extra stuff if this is the sysadmin user
+        if ($role -eq "sysadmin" -or $role -eq "System Administrator")
+        {
+            # prepare the SQL query
+            $approver | Add-Member -MemberType NoteProperty -Name OptionsSelector -Value $true
+        }# if ($role -eq "sysadmin" -or $role -eq "System Administrator")
+    }# else # A role was queried
+
+    return $approver
+}# function global:Get-PlatformWorkflowApprover
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformSecretWorkflowApprovers # Gets all Workflow Approvers for a Secret
+###########
+function global:Get-PlatformSecretWorkflowApprovers
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the secret to search.",ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # if the Name parameter was used
+    if ($PSBoundParameters.ContainsKey("Name"))
+    {
+        # getting the uuid of the object
+        $uuid = Get-PlatformObjectUuid -Type Secret -Name $Name
+    }
+
+    # new ArrayList for storing our special workflow approver objects
+    $WorkflowApprovers = New-Object System.Collections.ArrayList
+
+    # getting the original approvers by API call
+    $approvers = Invoke-PlatformAPI -APICall ServerManage/GetSecretApprovers -Body (@{ ID = $uuid } | ConvertTo-Json)
+
+    # for each approver found in the WorkflowApproversList
+    foreach ($approver in $approvers.WorkflowApproversList)
+    {
+        # if the approver contains the NoManagerAction AND the BackupApprover Properties
+        if ((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction") -and `
+            (($approver | Get-Member -MemberType NoteProperty).Name).Contains("BackupApprover"))
+        {
+            # then this is a specified backup approver
+            $backup = $approver.BackupApprover
+
+            # search for that approver that is listed in the $approver.BackupApprover property
+            if ($backup.ObjectType -eq "Role")
+            {
+                $approver = Get-PlatformWorkflowApprover -Role $backup.Name
+            }
+            else
+            {
+                $approver = Get-PlatformWorkflowApprover -User $backup.Name
+            }
+            
+            # create our new PlatformWorkflowApprover object with the isBackup property set to true
+            $obj = [PlatformWorkflowApprover]::new($approver, $true)
+        }
+        # otherwise if the NoManagerAction exists and it contains either "approve" or "deny"
+        elseif (((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction")) -and `
+                ($approver.NoManagerAction -eq "approve" -or ($approver.NoManagerAction -eq "deny")))
+        {
+            # create our new PlatformWorkflowApprover object with the isBackup property set to true
+            $obj = [PlatformWorkflowApprover]::new($approver, $true)
+        }
+        else # otherwise, it was a listed approver, and we can just
+        {
+            # create our new PlatformWorkflowApprover object with the isBackup property set to false
+            $obj = [PlatformWorkflowApprover]::new($approver, $false)
+        }
+
+        # adding it to our ArrayList
+        $WorkflowApprovers.Add($obj) | Out-Null
+    }# foreach ($approver in $approvers.WorkflowApproversList)
+
+    # returning the ArrayList
+    return $WorkflowApprovers
+}# function global:Get-PlatformSecretWorkflowApprovers
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -368,19 +503,20 @@ class PlatformRowAce
 # class for holding Secret information
 class PlatformSecret
 {
-    [System.String]$Name            # the name of the Secret
-    [System.String]$Type            # the type of Secret
-    [System.String]$ParentPath      # the Path of the Secret
-    [System.String]$Description     # the description 
-    [System.String]$ID              # the ID of the Secret
-    [System.String]$FolderId        # the FolderID of the Secret
-    [System.DateTime]$whenCreated   # when the Secret was created
-    [System.DateTime]$whenModified  # when the Secret was last modified
-    [System.String]$SecretText      # (Text Secrets) The contents of the Text Secret
-    [System.String]$SecretFileName  # (File Secrets) The file name of the Secret
-    [System.String]$SecretFileSize  # (File Secrets) The file size of the Secret
-    [System.String]$SecretFilePath  # (File Secrets) The download FilePath for this Secret
-    [PlatformRowAce[]]$RowAces      # The RowAces (Permissions) of this Secret
+    [System.String]$Name                           # the name of the Secret
+    [System.String]$Type                           # the type of Secret
+    [System.String]$ParentPath                     # the Path of the Secret
+    [System.String]$Description                    # the description 
+    [System.String]$ID                             # the ID of the Secret
+    [System.String]$FolderId                       # the FolderID of the Secret
+    [System.DateTime]$whenCreated                  # when the Secret was created
+    [System.DateTime]$whenModified                 # when the Secret was last modified
+    [System.String]$SecretText                     # (Text Secrets) The contents of the Text Secret
+    [System.String]$SecretFileName                 # (File Secrets) The file name of the Secret
+    [System.String]$SecretFileSize                 # (File Secrets) The file size of the Secret
+    [System.String]$SecretFilePath                 # (File Secrets) The download FilePath for this Secret
+    [PlatformRowAce[]]$RowAces                     # The RowAces (Permissions) of this Secret
+    [PlatformWorkflowApprover[]]$WorkflowApprovers # the workflow approvers for this Secret
 
     PlatformSecret ($secretinfo)
     {
@@ -414,6 +550,9 @@ class PlatformSecret
 
         # getting the RowAces for this secret
         $this.RowAces = Get-PlatformRowAce -Type Secret -Uuid $this.ID
+
+        # getting the WorkflowApprovers for this secret
+        $this.WorkflowApprovers = Get-PlatformSecretWorkflowApprovers -Uuid $this.ID
     }# PlatformSecret ($secretinfo)
 
     # method to retrieve secret content
@@ -454,6 +593,49 @@ class PlatformSecret
         }# Switch ($this.Type)
     }# ExportSecret()
 }# class PlatformSecret
+
+# class to hold Workflow Approvers
+class PlatformWorkflowApprover
+{
+    [System.Boolean]$isBackUp
+    [System.String]$NoManagerAction
+    [System.String]$DisplayName
+    [System.String]$ObjectType
+    [System.String]$DistinguishedName
+    [System.String]$DirectoryServiceUuid
+    [System.String]$SystemName
+    [System.String]$ServiceInstance
+    [System.String]$PType
+    [System.Boolean]$Locked
+    [System.String]$InternalName
+    [System.String]$StatusEnum
+    [System.String]$ServiceInstanceLocalized
+    [System.String]$ServiceType
+    [System.String]$Type
+    [System.String]$Name
+    [System.String]$Email
+    [System.String]$Status
+    [System.Boolean]$Enabled
+    [System.String]$Principal
+    [System.String]$Guid
+    [System.Boolean]$OptionsSelector # extra fields for default sysadmin role
+    [System.String]$RoleType
+    [System.String]$_ID
+    [System.Boolean]$ReadOnly
+    [System.String]$Description
+
+    PlatformWorkflowApprover($approver, $isBackup)
+    {
+        # setting if this is a backup (Requestor's Manager option)
+        $this.isBackUp = $isBackup
+
+        # adding the properties that exist
+        foreach ($property in (($approver | Get-Member -MemberType NoteProperty).Name | Where-Object {$_ -ne "Type-generated-field"}))
+        {
+            $this.$property = $approver.$property
+        }
+    }# PlatformWorkflowApprover($approver, $isBackup)
+}# class PlatformWorkflowApprover
 
 #######################################
 #endregion ############################
