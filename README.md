@@ -191,3 +191,91 @@ For File Secrets, this will retrieve the special FileDownloadUrl needed to downl
 For Text Secrets, this will export the contents of the SecretText member property into a .txt file with the same name as the Secret, in the directory that it exists currently according to the ParentPath.
 
 For File Secrets, this will download the Secret File in the directory that it exists currently according to the ParentPath.
+
+### Get-PlatformWorkflowApprover
+
+This function enables you perform a search for Approver information based on name of user or name of role. Should be used in conjunction when working with Workflow gets/sets.
+
+#### Syntax
+```
+PS:> Get-PlatformWorkflowApprover [-User] <string> [<CommonParameters>]
+
+OR
+
+PS:> Get-PlatformWorkflowApprover [-Role] <string>  [<CommonParameters>]
+```
+ - User - The name of the User to search.
+   - for example: "cloudadmin@domain.com"
+ - Role - The name of the Role to search.
+   - for example: "Widget Owners"
+
+#### Example
+```
+PS:> Get-PlatformWorkflowApprover -Role "System Administrator"
+
+Name                 : System Administrator
+Guid                 : sysadmin
+_ID                  : sysadmin
+Principal            : System Administrator
+Description          : The primary administrative role for the Admin
+                       Portal. Users in this role can delegate specific
+                       administrative rights to other roles who require
+                       more limited administrative access.
+RoleType             : PrincipalList
+ReadOnly             : False
+DirectoryServiceUuid : AAAAAAAA-EEEE-EEEE-EEEE-EEEEEEEEEEEE
+Type                 : Role
+PType                : Role
+ObjectType           : Role
+OptionsSelector      : True
+````
+
+### Get-PlatformSecretWorkflowApprovers
+
+This function enables you get all Workflow Approvers for a specified Secret. Returns $null if Workflow is not approved for this Secret.
+
+#### Syntax
+```
+PS:> Get-PlatformSecretWorkflowApprovers [-Name] <string> [<CommonParameters>]
+
+OR
+
+PS:> Get-PlatformSecretWorkflowApprovers [-Uuid] <string>  [<CommonParameters>]
+```
+ - Name - The name of the Secret to get.
+   - for example: "TextSecret1"
+ - Uuid - The Uuid of the Secret to get.
+   - for example: "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
+     - this version would always return only one Secret.
+
+#### Example
+```
+PS:> Get-PlatformSecretWorkflowApprovers -Uuid "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
+
+isBackUp                 : False
+NoManagerAction          :
+DisplayName              : cloudadmin
+ObjectType               : User
+DistinguishedName        : cloudadmin@domain
+DirectoryServiceUuid     : bbbbbbbb-cccc-cccc-cccc-eeeeeeeeeeee
+SystemName               : cloudadmin@qtglab
+ServiceInstance          : CDS
+PType                    : User
+Locked                   : False
+InternalName             : cccccccc-dddd-dddd-dddd-dddddddddddd
+StatusEnum               : Active
+ServiceInstanceLocalized : Centrify Directory
+ServiceType              : CDS
+Type                     : User
+Name                     : cloudadmin@domain
+Email                    : user@domain.com
+Status                   : Active
+Enabled                  : True
+Principal                : cloudadmin@domain
+Guid                     : ffffffff-eeee-eeee-eeee-eeeeeeeeeeee
+OptionsSelector          : True
+RoleType                 :
+_ID                      :
+ReadOnly                 : False
+Description              :
+````
