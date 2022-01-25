@@ -279,3 +279,37 @@ _ID                      :
 ReadOnly                 : False
 Description              :
 ````
+
+### Get-PlatformSet
+
+This function enables you get a Set object from the tenant.
+
+**Important: At this time, there is no way to distinguish the original creator of the Set object. This means that poorly named Sets with little to no description might be difficult to understand the purpose of the Set. It is recommended that the Set object be analyzed to determine if it should be migrated or not.**
+
+#### Syntax
+```
+PS:> Get-PlatformSet [-Name] <string> [<CommonParameters>]
+
+OR
+
+PS:> Get-PlatformSet [-Uuid] <string>  [<CommonParameters>]
+```
+ - Name - The name of the Setto get.
+   - for example: "Secret Set 1"
+ - Uuid - The Uuid of the Set to get.
+   - for example: "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
+
+#### Example
+```
+PS:> Get-PlatformSet -Type Secret -Name "Secret Set 1"
+
+ObjectType              : DataVault
+Name                    : Secret Set 1
+ID                      : aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
+Description             : Description of Secret Set 1
+whenCreated             : 1/18/2022 3:49:10 PM
+PermissionRowAces       : {cloudadmin@domain, conman@domain}
+MemberPermissionRowAces : {conman@domain}
+Members                 : {bbbbbbbb-0000-0000-0000-eeeeeeeeeeee,
+                          cccccccc-0000-0000-0000-eeeeeeeeeeee}
+````

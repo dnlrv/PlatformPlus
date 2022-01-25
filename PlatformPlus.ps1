@@ -187,9 +187,10 @@ function global:Convert-PermissionToString
     [System.String]$ReturnValue = ""
 
     # setting our readable permission hash based on our object type
-    switch ($Type)
+    switch -Regex ($Type)
     {
-        "Secret" { $AceHash = @{ GrantSecret = 1; ViewSecret = 4; EditSecret = 8; DeleteSecret= 64; RetrieveSecret = 65536} ; break }
+        "Secret|DataVault" { $AceHash = @{ GrantSecret = 1; ViewSecret = 4; EditSecret = 8; DeleteSecret = 64; RetrieveSecret = 65536} ; break }
+        "Set"              { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet    = 8; DeleteSet    = 64} ; break }
     }
 
     # for each bit (sorted) in our specified permission hash
@@ -238,14 +239,16 @@ function global:Get-PlatformRowAce
 
     Switch ($Type)
     {
-        "Secret" { $table = "DataVault" ; break }
+        "Secret"    { $table = "DataVault"   ; break }
+        "Set"       { $table = "Collections" ; break }
+        default     { $table = $Type         ; break }
     }
 
     # preparing the JSONBody
     $JSONBody = @{ RowKey = $uuid ; Table = $table } | ConvertTo-Json
 
     # getting the RowAce information
-    $RowAces = Invoke-PlatformAPI -APICall Acl/GetRowAces -Body $JSONBody
+    $RowAces = Invoke-PlatformAPI -APICall "Acl/GetRowAces" -Body $JSONBody
 
     # setting a new ArrayList for the return
     $RowAceObjects = New-Object System.Collections.ArrayList
@@ -274,6 +277,82 @@ function global:Get-PlatformRowAce
     # returning the RowAceObjects
     return $RowAceObjects
 }# function global:Get-PlatformRowAce
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformCollectionRowAce # Gets RowAces for the specified platform Collection object
+###########
+function global:Get-PlatformCollectionRowAce
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The type of object to search.")]
+        [System.String]$Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the object to search.", ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the object to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # if the Name parameter was used
+    if ($PSBoundParameters.ContainsKey("Name"))
+    {
+        $collectiontype = ""
+        Switch -Regex ($Type)
+        {
+            "Secret|DataVault" { $collectiontype = "Set"; break }
+        }
+
+        # getting the uuid of the object
+        $uuid = Get-PlatformObjectUuid -Type $collectiontype -Name $Name
+    }
+
+    # setting the table variable
+    [System.String]$table = ""
+
+    Switch ($Type)
+    {
+        "Secret"    { $table = "DataVault"   ; break }
+        "Set"       { $table = "Collections" ; break }
+        default     { $table = $Type         ; break }
+    }
+
+    # preparing the JSONBody
+    $JSONBody = @{ RowKey = $uuid ; Table = $table } | ConvertTo-Json
+
+    # getting the RowAce information
+    $CollectionAces = Invoke-PlatformAPI -APICall "Acl/GetCollectionAces" -Body $JSONBody
+
+    # setting a new ArrayList for the return
+    $CollectionAceObjects = New-Object System.Collections.ArrayList
+
+    # for each rowace retrieved
+    foreach ($collectionace in $CollectionAces)
+    {
+        # ignore any global root entries
+        if ($collectionace.Type -eq "GlobalRoot")
+        {
+            continue
+        }
+
+        # creating the PlatformPermission object
+        $platformpermission = [PlatformPermission]::new($Type, $collectionace.Grant, `
+                              $collectionace.GrantStr)
+
+        # creating the PlatformRowAce object
+        $obj = [PlatformRowAce]::new($collectionace.PrincipalType, $collectionace.Principal, `
+               $collectionace.PrincipalName, $collectionace.AceID, $platformpermission)
+
+        # adding the PlatformRowAce object to our ArrayList
+        $CollectionAceObjects.Add($obj) | Out-Null
+    }# foreach ($collectionace in $CollectionAces)
+
+    # returning the RowAceObjects
+    return $CollectionAceObjects
+}# function global:Get-PlatformCollectionRowAce
 #endregion
 ###########
 
@@ -442,6 +521,53 @@ function global:Get-PlatformSecretWorkflowApprovers
     # returning the ArrayList
     return $WorkflowApprovers
 }# function global:Get-PlatformSecretWorkflowApprovers
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformSet # Gets a Platform Set object
+###########
+function global:Get-PlatformSet
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The type of Set to search.")]
+        [System.String]$Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Set to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # if the Name parameter was used
+    if ($PSBoundParameters.ContainsKey("Name"))
+    {
+        # getting the uuid of the object
+        $uuid = Get-PlatformObjectUuid -Type "Set" -Name $Name
+    }
+
+    # making the query
+    $query = (Query-VaultRedRock -SQLQuery ('Select ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
+    
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+    # if the query isn't null
+    if ($query -ne $null)
+    {
+        # create a new Platform Set object
+        $set = [PlatformSet]::new($query)
+
+        # get the Uuids of the members
+        $set.GetMembers()
+    }
+    else
+    {
+        return $false
+    }
+    
+    return $set
+}# function global:Get-PlatformSet
 #endregion
 ###########
 
@@ -636,6 +762,40 @@ class PlatformWorkflowApprover
         }
     }# PlatformWorkflowApprover($approver, $isBackup)
 }# class PlatformWorkflowApprover
+
+# class to hold Sets
+class PlatformSet
+{
+    [System.String]$ObjectType
+    [System.String]$Name
+    [System.String]$ID
+    [System.String]$Description
+    [System.DateTime]$whenCreated
+    [PlatformRowAce[]]$PermissionRowAces         # permissions of the Set object itself
+    [PlatformRowAce[]]$MemberPermissionRowAces   # permissions of the members for this Set object
+    [System.Collections.ArrayList]$Members = @{} # the Uuids of the members
+
+    PlatformSet($set)
+    {
+        $this.ObjectType = $set.ObjectType
+        $this.Name = $set.Name
+        $this.ID = $set.ID
+        $this.Description = $set.Description
+        $this.whenCreated = $set.whenCreated
+
+        # getting the RowAces for this Set
+        $this.PermissionRowAces = Get-PlatformRowAce -Type "Set" -Uuid $this.ID
+
+        # getting the RowAces for the member permissions
+        $this.MemberPermissionRowAces = Get-PlatformCollectionRowAce -Type $this.ObjectType -Uuid $this.ID
+    }# PlatformSet($set)
+
+    getMembers()
+    {
+        $m = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID = $this.ID} | ConvertTo-Json)
+        $this.Members.AddRange(($m | Select-Object -ExpandProperty Key))
+    }
+}# class PlatformSet
 
 #######################################
 #endregion ############################
