@@ -269,7 +269,7 @@ $PlatformSecrets | ConvertTo-Json -Depth 5 | Out-File .\PlatformSecrets.manifest
 
 Write-Verbose ("Exporting PrincipalList.manifest file.")
 # exporting the principal list to check on import
-$PlatformSecrets.RowAces | Select-Object -ExpandProperty PrincipalName,PrincipalType | Sort-Object PrincipalName -Unique | ConvertTo-Json | Out-File PlatformSecretPrincipalList.manifest
+$PlatformSecrets.RowAces | Select-Object PrincipalName,PrincipalType | Sort-Object PrincipalName -Unique | ConvertTo-Json | Out-File PlatformSecretPrincipalList.manifest
 
 # setting $PlatformSecrets as a global variable
 $global:PlatformSecrets = $PlatformSecrets

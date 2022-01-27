@@ -257,7 +257,7 @@ function global:Get-PlatformRowAce
     foreach ($rowace in $RowAces)
     {
         # ignore any global root entries
-        if ($rowace.Type -eq "GlobalRoot")
+        if ($rowace.Type -eq "GlobalRoot" -or $rowace.PrincipalName -eq "Technical Support Access")
         {
             continue
         }
@@ -333,7 +333,7 @@ function global:Get-PlatformCollectionRowAce
     foreach ($collectionace in $CollectionAces)
     {
         # ignore any global root entries
-        if ($collectionace.Type -eq "GlobalRoot")
+        if ($collectionace.Type -eq "GlobalRoot" -or $rowace.PrincipalName -eq "Technical Support Access")
         {
             continue
         }
@@ -797,6 +797,28 @@ class PlatformSet
     }
 }# class PlatformSet
 
+# class to hold Accounts
+class PlatformAccount
+{
+    [System.String]$AccountType
+    [System.String]$SourceName
+    [System.String]$SourceID
+    [System.String]$Name
+    [System.String]$Username
+    [System.Boolean]$isManaged
+    [System.String]$Password
+    [System.String]$Description
+    [PlatformRowAce[]]$RowAces                     # The RowAces (Permissions) of this Account
+    [PlatformWorkflowApprover[]]$WorkflowApprovers # the workflow approvers for this Account
+
+    PlatformAccount($account)
+    {
+    }# PlatformAccount($account)
+
+    getPassword()
+    {
+    }
+}# class PlatformAccount
 #######################################
 #endregion ############################
 #######################################
