@@ -163,6 +163,13 @@ function global:Get-PlatformObjectUuid
         Write-Warning ("Multiple Uuids returned!")
     }
 
+    # return $false if no Uuids were found
+    if ($uuid.Count -eq 0)
+    {
+        Write-Warning ("No Uuids found!")
+        return $false
+    }
+
     # returning just the Uuid
     return $Uuid
 }# global:Get-PlatformObjectUuid
@@ -572,6 +579,33 @@ function global:Get-PlatformSet
 ###########
 
 ###########
+#region ### global:Verify-PlatformCredentials # Verifies the password is health for the specified account
+###########
+function global:Verify-PlatformCredentials
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to check.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    $response = Invoke-PlatformAPI -APICall ServerManage/CheckAccountHealth -Body (@{ ID = $Uuid } | ConvertTo-Json)
+
+    if ($response -eq "OK")
+    {
+        [System.Boolean]$responseAnswer = $true
+    }
+    else
+    {
+        [System.Boolean]$responseAnswer = $false
+    }
+    
+    return $responseAnswer
+}# function global:Verify-PlatformCredentials
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -637,6 +671,7 @@ class PlatformSecret
     [System.String]$FolderId                       # the FolderID of the Secret
     [System.DateTime]$whenCreated                  # when the Secret was created
     [System.DateTime]$whenModified                 # when the Secret was last modified
+    [System.DateTime]$lastRetrieved                # when the Secret was last retrieved
     [System.String]$SecretText                     # (Text Secrets) The contents of the Text Secret
     [System.String]$SecretFileName                 # (File Secrets) The file name of the Secret
     [System.String]$SecretFileSize                 # (File Secrets) The file size of the Secret
@@ -659,6 +694,14 @@ class PlatformSecret
         {
             # also update the whenModified property
             $this.whenModified = $secretinfo.WhenContentsReplaced
+        }
+
+        # getting when the secret was last accessed
+        $lastquery = Query-VaultRedRock -SQLQuery ('SELECT DataVault.ID, DataVault.SecretName, Event.WhenOccurred FROM DataVault JOIN Event ON DataVault.ID = Event.DataVaultItemID WHERE (Event.EventType IN ("Cloud.Server.DataVault.DataVaultDownload") OR Event.EventType IN ("Cloud.Server.DataVault.DataVaultViewSecret"))  AND Event.WhenOccurred < Datefunc("now") AND DataVault.ID = "{0}" ORDER BY WhenOccurred DESC LIMIT 1'	-f $this.ID)
+
+        if ($lastquery -ne $null)
+        {
+            $this.lastRetrieved = $lastquery.whenOccurred
         }
 
         # if the ParentPath is blank (root folder)
