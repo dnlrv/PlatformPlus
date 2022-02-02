@@ -814,9 +814,10 @@ class PlatformSet
     [System.String]$ID
     [System.String]$Description
     [System.DateTime]$whenCreated
-    [PlatformRowAce[]]$PermissionRowAces         # permissions of the Set object itself
-    [PlatformRowAce[]]$MemberPermissionRowAces   # permissions of the members for this Set object
-    [System.Collections.ArrayList]$Members = @{} # the Uuids of the members
+    [PlatformRowAce[]]$PermissionRowAces             # permissions of the Set object itself
+    [PlatformRowAce[]]$MemberPermissionRowAces       # permissions of the members for this Set object
+    [System.Collections.ArrayList]$MembersUuid = @{} # the Uuids of the members
+    [System.Collections.ArrayList]$SetMembers  = @{} # the members of this set
 
     PlatformSet($set)
     {
@@ -835,10 +836,42 @@ class PlatformSet
 
     getMembers()
     {
+        # getting the set members
         $m = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID = $this.ID} | ConvertTo-Json)
-        $this.Members.AddRange(($m | Select-Object -ExpandProperty Key))
-    }
+        
+        # Adding the Uuids to the Members property
+        $this.MembersUuid.AddRange(($m | Select-Object -ExpandProperty Key))
+
+        # for each item in the query
+        foreach ($i in $m)
+        {
+            $obj = $null
+            
+            # getting the object based on the Uuid
+            Switch ($i.Table)
+            {
+                "DataVault" {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,SecretName AS Name FROM DataVault WHERE ID = '{0}'" -f $i.Key); break }
+            }
+            
+            $this.SetMembers.Add(([SetMember]::new($obj.Name,$i.Table,$obj.Uuid))) | Out-Null
+        }# foreach ($i in $m)
+    }# getMembers()
 }# class PlatformSet
+
+# class to hold SetMembers
+class SetMember
+{
+    [System.String]$Name
+    [System.String]$Type
+    [System.String]$Uuid
+
+    SetMember([System.String]$n, [System.String]$t, [System.String]$u)
+    {
+        $this.Name = $n
+        $this.Type = $t
+        $this.Uuid = $u
+    }
+}# class SetMember
 
 # class to hold Accounts
 class PlatformAccount
