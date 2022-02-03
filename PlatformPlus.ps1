@@ -147,6 +147,7 @@ function global:Get-PlatformObjectUuid
     {
         "Secret" { $tablename = "DataVault"; $idname = "ID"; $columnname = "SecretName"; break }
         "Set"    { $tablename = "Sets"     ; $idname = "ID"; $columnname = "Name"      ; break }
+        
     }
 
     # setting the SQL query string
@@ -196,8 +197,11 @@ function global:Convert-PermissionToString
     # setting our readable permission hash based on our object type
     switch -Regex ($Type)
     {
-        "Secret|DataVault" { $AceHash = @{ GrantSecret = 1; ViewSecret = 4; EditSecret = 8; DeleteSecret = 64; RetrieveSecret = 65536} ; break }
-        "Set"              { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet    = 8; DeleteSet    = 64} ; break }
+        "Secret|DataVault" { $AceHash = @{ GrantSecret = 1; ViewSecret = 4; EditSecret  = 8; DeleteSecret = 64; RetrieveSecret = 65536} ; break }
+        "Set"              { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet     = 8; DeleteSet    = 64} ; break }
+        "ManualBucket|SqlDynamic"    
+                           { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet     = 8; DeleteSet    = 64} ; break }
+        "Phantom"          { $AceHash = @{ GrantFolder = 1; ViewFolder = 4; EditFolder  = 8; DeleteFolder = 64; AddFolder = 65536} ; break }
     }
 
     # for each bit (sorted) in our specified permission hash
@@ -244,10 +248,11 @@ function global:Get-PlatformRowAce
     # setting the table variable
     [System.String]$table = ""
 
-    Switch ($Type)
+    Switch -Regex ($Type)
     {
         "Secret"    { $table = "DataVault"   ; break }
-        "Set"       { $table = "Collections" ; break }
+        "Set|Phantom|ManualBucket|SqlDynamic"
+                    { $table = "Collections" ; break }
         default     { $table = $Type         ; break }
     }
 
@@ -556,7 +561,7 @@ function global:Get-PlatformSet
     }
 
     # making the query
-    $query = (Query-VaultRedRock -SQLQuery ('Select ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
+    $query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
     
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
     # if the query isn't null
@@ -565,8 +570,12 @@ function global:Get-PlatformSet
         # create a new Platform Set object
         $set = [PlatformSet]::new($query)
 
-        # get the Uuids of the members
-        $set.GetMembers()
+        # if the Set is a Manual Set (not a Folder or Dynamic Set)
+        if ($set.SetType -eq "ManualBucket")
+        {
+            # get the Uuids of the members
+            $set.GetMembers()
+        }
 
         # determin the potential owner of the Set
         $set.determineOwner()
@@ -812,6 +821,7 @@ class PlatformWorkflowApprover
 # class to hold Sets
 class PlatformSet
 {
+    [System.String]$SetType
     [System.String]$ObjectType
     [System.String]$Name
     [System.String]$ID
@@ -825,17 +835,26 @@ class PlatformSet
 
     PlatformSet($set)
     {
+        $this.SetType = $set.CollectionType
         $this.ObjectType = $set.ObjectType
         $this.Name = $set.Name
         $this.ID = $set.ID
         $this.Description = $set.Description
-        $this.whenCreated = $set.whenCreated
+
+        if ($set.whenCreated -ne $null)
+        {
+            $this.whenCreated = $set.whenCreated
+        }
 
         # getting the RowAces for this Set
-        $this.PermissionRowAces = Get-PlatformRowAce -Type "Set" -Uuid $this.ID
+        $this.PermissionRowAces = Get-PlatformRowAce -Type $this.SetType -Uuid $this.ID
 
-        # getting the RowAces for the member permissions
+        # if this isn't a Dynamic Set
+        if ($this.SetType -ne "SqlDynamic")
+        {
+            # getting the RowAces for the member permissions
         $this.MemberPermissionRowAces = Get-PlatformCollectionRowAce -Type $this.ObjectType -Uuid $this.ID
+        }
     }# PlatformSet($set)
 
     getMembers()
@@ -843,29 +862,33 @@ class PlatformSet
         # getting the set members
         $m = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID = $this.ID} | ConvertTo-Json)
         
-        # Adding the Uuids to the Members property
-        $this.MembersUuid.AddRange(($m | Select-Object -ExpandProperty Key))
-
-        # for each item in the query
-        foreach ($i in $m)
+        # if there are more than 0 members
+        if ($m.Count -gt 0)
         {
-            $obj = $null
-            
-            # getting the object based on the Uuid
-            Switch ($i.Table)
+            # Adding the Uuids to the Members property
+            $this.MembersUuid.AddRange(($m | Select-Object -ExpandProperty Key))
+
+            # for each item in the query
+            foreach ($i in $m)
             {
-                "DataVault" {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,SecretName AS Name FROM DataVault WHERE ID = '{0}'" -f $i.Key); break }
-            }
-            
-            $this.SetMembers.Add(([SetMember]::new($obj.Name,$i.Table,$obj.Uuid))) | Out-Null
-        }# foreach ($i in $m)
+                $obj = $null
+                
+                # getting the object based on the Uuid
+                Switch ($i.Table)
+                {
+                    "DataVault" {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,SecretName AS Name FROM DataVault WHERE ID = '{0}'" -f $i.Key); break }
+                }
+                
+                $this.SetMembers.Add(([SetMember]::new($obj.Name,$i.Table,$obj.Uuid))) | Out-Null
+            }# foreach ($i in $m)
+        }# if ($m.Count -gt 0)
     }# getMembers()
 
     # helps determine who might own this set
     determineOwner()
     {
         # get all RowAces where the PrincipalType is User and has all permissions on this Set object
-        $owner = $this.PermissionRowAces | Where-Object {$_.PrincipalType -eq "User" -and $_.PlatformPermission.GrantInt -eq 253}
+        $owner = $this.PermissionRowAces | Where-Object {$_.PrincipalType -eq "User" -and ($_.PlatformPermission.GrantInt -eq 253 -or $_.PlatformPermission.GrantInt -eq 65789)}
 
         Switch ($owner.Count)
         {

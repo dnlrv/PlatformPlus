@@ -247,7 +247,10 @@ foreach ($folder in $SecretFolders)
 }# foreach ($folder in $SecretFolders)
 
 # setting an ArrayList for a final product
-$PlatformSecrets = New-Object System.Collections.ArrayList
+$PlatformSecrets    = New-Object System.Collections.ArrayList
+
+# setting an ArrayList for a final product for Sets
+$PlatformSecretSets = New-Object System.Collections.ArrayList
 
 Write-Verbose ("Working with Secrets now.")
 # Now getting the Secrets
@@ -263,17 +266,39 @@ foreach ($datavaultobject in $DataVaultObjects)
     $PlatformSecrets.Add($platformsecret) | Out-Null
 }# foreach ($datavaultobject in $DataVaultObjects)
 
+Write-Verbose ("Working with Sets and Folders now.")
+# Now getting Secret Sets and Folders
+$query = Query-VaultRedRock -SQLQuery "SELECT * FROM Sets WHERE ObjectType = 'DataVault'"
+
+foreach ($set in $query)
+{
+    Write-Verbose ("Collection: [{0}] Name: [{1}]" -f $set.CollectionType, $set.Name)
+    # placeholder object
+    $platformset = $null
+
+    # get the Set/Folder by Uuid
+    $platformset = Get-PlatformSet -Type Secret -Uuid $set.ID
+
+    $PlatformSecretSets.Add($platformset) | Out-Null
+}
+
 Write-Verbose ("Exporting PlatformSecrets.manifest file.")
 # exporting JSON format PlatformSecrets.manifest
-$PlatformSecrets | ConvertTo-Json -Depth 5 | Out-File .\PlatformSecrets.manifest
+$PlatformSecrets    | ConvertTo-Json -Depth 5 | Out-File .\PlatformSecrets.manifest
+
+Write-Verbose ("Exporting PlatformSetsAndFolders.manifest file.")
+# exporting JSON format PlatformSetsAndFolders.manifest
+$PlatformSecretSets | ConvertTo-Json -Depth 5 | Out-File .\PlatformSetsAndFolders.manifest
 
 Write-Verbose ("Exporting PrincipalList.manifest file.")
 # exporting the principal list to check on import
 $PlatformSecrets.RowAces | Select-Object PrincipalName,PrincipalType | Sort-Object PrincipalName -Unique | ConvertTo-Json | Out-File PlatformSecretPrincipalList.manifest
 
-# setting $PlatformSecrets as a global variable
-$global:PlatformSecrets = $PlatformSecrets
 
+
+# setting $PlatformSecrets as a global variable
+$global:PlatformSecrets    = $PlatformSecrets
+$global:PlatformSecretSets = $PlatformSecretSets
 Exit 0 # EXITCODE 0 : Successful execution
 
 #######################################
