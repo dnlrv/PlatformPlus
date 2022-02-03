@@ -567,6 +567,9 @@ function global:Get-PlatformSet
 
         # get the Uuids of the members
         $set.GetMembers()
+
+        # determin the potential owner of the Set
+        $set.determineOwner()
     }
     else
     {
@@ -818,6 +821,7 @@ class PlatformSet
     [PlatformRowAce[]]$MemberPermissionRowAces       # permissions of the members for this Set object
     [System.Collections.ArrayList]$MembersUuid = @{} # the Uuids of the members
     [System.Collections.ArrayList]$SetMembers  = @{} # the members of this set
+    [System.String]$PotentialOwner                   # a guess as to who possibly owns this set
 
     PlatformSet($set)
     {
@@ -856,6 +860,20 @@ class PlatformSet
             $this.SetMembers.Add(([SetMember]::new($obj.Name,$i.Table,$obj.Uuid))) | Out-Null
         }# foreach ($i in $m)
     }# getMembers()
+
+    # helps determine who might own this set
+    determineOwner()
+    {
+        # get all RowAces where the PrincipalType is User and has all permissions on this Set object
+        $owner = $this.PermissionRowAces | Where-Object {$_.PrincipalType -eq "User" -and $_.PlatformPermission.GrantInt -eq 253}
+
+        Switch ($owner.Count)
+        {
+            1       { $this.PotentialOwner = $owner.PrincipalName ; break }
+            0       { $this.PotentialOwner = "No owners found"    ; break }
+            default { $this.PotentialOwner = "Multiple potential owners found" ; break }
+        }# Switch ($owner.Count)
+    }# determineOwner()
 }# class PlatformSet
 
 # class to hold SetMembers
