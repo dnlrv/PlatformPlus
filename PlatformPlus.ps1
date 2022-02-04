@@ -82,9 +82,10 @@ function global:Invoke-PlatformAPI
     }# Try
     Catch
     {
-        $LastError = [PlatformAPIException]::new()
+        $LastError = [PlatformAPIException]::new("A PlatformAPI error has occured. Check `$LastError for more information")
         $LastError.APICall = $APICall
         $LastError.Payload = $Body
+        $LastError.Response = $Response
         $LastError.ErrorMessage = $_.Exception.Message
         $global:LastError = $LastError
         Throw $_.Exception
@@ -207,7 +208,16 @@ function global:Convert-PermissionToString
         "ManualBucket|SqlDynamic"    
                            { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet     = 8; DeleteSet    = 64} ; break }
         "Phantom"          { $AceHash = @{ GrantFolder = 1; ViewFolder = 4; EditFolder  = 8; DeleteFolder = 64; AddFolder = 65536} ; break }
-    }
+        "Server"           { $AceHash = @{ GrantServer = 1; ViewServer = 4; EditServer  = 8; DeleteServer = 64; AgentAuthServer = 65536; 
+                                           ManageSessionServer = 128; RequestZoneRoleServer = 131072; AddAccountServer = 524288;
+                                           UnlockAccountServer = 1048576; OfflineRescueServer = 2097152;  AddPrivilegeElevationServer = 4194304}; break }
+        "Account|VaultAccount" 
+                           { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; LoginAccount = 128; DeleteAccount = 64; CheckoutAccount = 65536; 
+                                           UpdatePasswordAccount = 131072; WorkspaceLoginAccount = 262147; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
+        "Database|VaultDatabase"
+                           { $AceHash = @{ GrantDatabaseAccount = 1; ViewDatabaseAccount = 4; EditDatabaseAccount = 8; DeleteDatabaseAccount = 64;
+                                           CheckoutDatabaseAccount = 65536; UpdatePasswordDatabaseAccount = 131072; RotateDatabaseAccount = 524288}; break }
+    }# switch -Regex ($Type)
 
     # for each bit (sorted) in our specified permission hash
     foreach ($bit in ($AceHash.GetEnumerator() | Sort-Object))
@@ -546,51 +556,74 @@ function global:Get-PlatformSecretWorkflowApprovers
 ###########
 function global:Get-PlatformSet
 {
+    [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
-        [Parameter(Mandatory = $true, HelpMessage = "The type of Set to search.")]
+        [Parameter(Mandatory = $true, HelpMessage = "The type of Set to search.", ParameterSetName = "Type")]
         [System.String]$Type,
 
         [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Name")]
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
         [System.String]$Name,
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Set to search.",ParameterSetName = "Uuid")]
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
         [System.String]$Uuid
     )
 
     # if the Name parameter was used
-    if ($PSBoundParameters.ContainsKey("Name"))
+    #if ($PSBoundParameters.ContainsKey("Name"))
+    if ($PSCmdlet.ParameterSetName -eq "Name")
     {
         # getting the uuid of the object
         $uuid = Get-PlatformObjectUuid -Type "Set" -Name $Name
+        #$query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
+    }
+    elseif ($PSCmdlet.ParameterSetName -eq "All")
+    {
+        # getting all
+        $query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets'))
+    }
+    else # getting only the ont specified by the uuid
+    {
+        $query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
     }
 
     # making the query
-    $query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
+    #$query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
     
+    $queries = New-Object System.Collections.ArrayList
+
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
     # if the query isn't null
     if ($query -ne $null)
     {
-        # create a new Platform Set object
-        $set = [PlatformSet]::new($query)
-
-        # if the Set is a Manual Set (not a Folder or Dynamic Set)
-        if ($set.SetType -eq "ManualBucket")
+        foreach ($q in $query)
         {
-            # get the Uuids of the members
-            $set.GetMembers()
-        }
+            Write-Verbose ("Working with [{0}] Set [{1}]" -f $q.Name, $q.ObjectType)
+            # create a new Platform Set object
+            $set = [PlatformSet]::new($q)
 
-        # determin the potential owner of the Set
-        $set.determineOwner()
-    }
+            # if the Set is a Manual Set (not a Folder or Dynamic Set)
+            if ($set.SetType -eq "ManualBucket")
+            {
+                # get the Uuids of the members
+                $set.GetMembers()
+            }
+
+            # determin the potential owner of the Set
+            $set.determineOwner()
+
+            $queries.Add($set) | Out-Null
+        }# foreach ($q in $query)
+    }# if ($query -ne $null)
     else
     {
         return $false
     }
     
-    return $set
+    #return $set
+    return $queries
 }# function global:Get-PlatformSet
 #endregion
 ###########
@@ -948,8 +981,9 @@ class PlatformAPIException : System.Exception
     [System.String]$APICall
     [System.String]$Payload
     [System.String]$ErrorMessage
+    [PSCustomObject]$Response
 
-    PlatformAPIException([System.String]$s) : base ($s) {}
+    PlatformAPIException([System.String]$message) : base ($message) {}
 
     PlatformAPIException() {}
 }
