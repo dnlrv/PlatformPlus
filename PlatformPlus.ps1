@@ -82,6 +82,11 @@ function global:Invoke-PlatformAPI
     }# Try
     Catch
     {
+        $LastError = [PlatformAPIException]::new()
+        $LastError.APICall = $APICall
+        $LastError.Payload = $Body
+        $LastError.ErrorMessage = $_.Exception.Message
+        $global:LastError = $LastError
         Throw $_.Exception
     }
 }# function global:Invoke-PlatformAPI 
@@ -936,6 +941,18 @@ class PlatformAccount
     {
     }
 }# class PlatformAccount
+
+# class to hold a custom PlatformError
+class PlatformAPIException : System.Exception
+{
+    [System.String]$APICall
+    [System.String]$Payload
+    [System.String]$ErrorMessage
+
+    PlatformAPIException([System.String]$s) : base ($s) {}
+
+    PlatformAPIException() {}
+}
 #######################################
 #endregion ############################
 #######################################
