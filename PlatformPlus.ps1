@@ -388,6 +388,7 @@ function global:Get-PlatformCollectionRowAce
 ###########
 function global:Get-PlatformSecret
 {
+    [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
         [Parameter(Mandatory = $true, HelpMessage = "The name of the secret to search.",ParameterSetName = "Name")]
@@ -397,21 +398,39 @@ function global:Get-PlatformSecret
         [System.String]$Uuid
     )
 
+    # base query
+    $query = "SELECT * FROM DataVault"
+
     # if the Name parameter was used
-    if ($PSBoundParameters.ContainsKey("Name"))
+    if ($PSCmdlet.ParameterSetName -eq "Name")
     {
-        # getting the uuid of the object
-        $uuid = Get-PlatformObjectUuid -Type Secret -Name $Name
+        # append to the query
+        $query += ("WHERE SecretName = '{0}'" -f $Name)
+    }
+    # if the Uuid parameter was used
+    elseif ($PSCmdlet.ParameterSetName -eq "Uuid")
+    {
+        # append to the query
+        $query += ("WHERE ID = '{0}'" -f $uuid)
     }
 
-    # getting the secret information
-    $secretinfo = Query-VaultRedRock -SQLQuery ("SELECT * FROM DataVault WHERE ID = '{0}'" -f $uuid)
+    # make the query
+    $sqlquery = Query-VaultRedRock -SqlQuery $query
 
-    # creating the PlatformSecret object
-    $obj = [PlatformSecret]::new($secretinfo)
+    # new ArrayList to hold multiple entries
+    $secrets = New-Object System.Collections.ArrayList
 
-    # returning that object
-    return $obj
+    # for each secret in the query
+    foreach ($secret in $sqlquery)
+    {
+        # creating the PlatformSecret object
+        $obj = [PlatformSecret]::new($secret)
+
+        $secrets.Add($obj) | Out-Null
+    }# foreach ($secret in $query)
+
+    # returning the secrets
+    return $secrets
 }# lobal:Get-PlatformSecret
 #endregion
 ###########
@@ -577,7 +596,6 @@ function global:Get-PlatformSet
     {
         # getting the uuid of the object
         $uuid = Get-PlatformObjectUuid -Type "Set" -Name $Name
-        #$query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
     }
     elseif ($PSCmdlet.ParameterSetName -eq "All")
     {
@@ -589,9 +607,7 @@ function global:Get-PlatformSet
         $query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
     }
 
-    # making the query
-    #$query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
-    
+    # ArrayList to hold objects
     $queries = New-Object System.Collections.ArrayList
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
