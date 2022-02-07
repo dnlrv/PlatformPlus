@@ -582,39 +582,47 @@ function global:Get-PlatformSet
         [System.String]$Type,
 
         [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Name")]
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
         [System.String]$Name,
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Set to search.",ParameterSetName = "Uuid")]
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
         [System.String]$Uuid
     )
 
-    # if the Name parameter was used
-    #if ($PSBoundParameters.ContainsKey("Name"))
-    if ($PSCmdlet.ParameterSetName -eq "Name")
+    # setting the base query
+    $query = "Select * FROM Sets"
+
+    # arraylist for extra options
+    $extras = New-Object System.Collections.ArrayList
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
     {
-        # getting the uuid of the object
-        $uuid = Get-PlatformObjectUuid -Type "Set" -Name $Name
-    }
-    elseif ($PSCmdlet.ParameterSetName -eq "All")
-    {
-        # getting all
-        $query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets'))
-    }
-    else # getting only the ont specified by the uuid
-    {
-        $query = (Query-VaultRedRock -SQLQuery ('Select CollectionType,ObjectType,Name,WhenCreated,ID,Description FROM Sets WHERE ID = "{0}"' -f $uuid))
-    }
+        # appending the WHERE 
+        $query += " WHERE "
+
+        # setting up the extra conditionals
+        if ($PSBoundParameters.ContainsKey("Type")) { $extras.Add(("ObjectType = '{0}'" -f $Type)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("Name = '{0}'"       -f $Name)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"         -f $Uuid)) | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # making the query
+    $sqlquery = Query-VaultRedRock -SQLQuery $query
 
     # ArrayList to hold objects
     $queries = New-Object System.Collections.ArrayList
-
-    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+    
     # if the query isn't null
-    if ($query -ne $null)
+    if ($sqlquery -ne $null)
     {
-        foreach ($q in $query)
+        foreach ($q in $sqlquery)
         {
             Write-Verbose ("Working with [{0}] Set [{1}]" -f $q.Name, $q.ObjectType)
             # create a new Platform Set object
@@ -930,7 +938,8 @@ class PlatformSet
                 # getting the object based on the Uuid
                 Switch ($i.Table)
                 {
-                    "DataVault" {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,SecretName AS Name FROM DataVault WHERE ID = '{0}'" -f $i.Key); break }
+                    "DataVault"    {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,SecretName AS Name FROM DataVault WHERE ID = '{0}'" -f $i.Key); break }
+                    "VaultAccount" {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID As Uuid,(Name || '\' || User) AS Name FROM VaultAccount WHERE ID = '{0}'" -f $i.Key); break }
                 }
                 
                 $this.SetMembers.Add(([SetMember]::new($obj.Name,$i.Table,$obj.Uuid))) | Out-Null
