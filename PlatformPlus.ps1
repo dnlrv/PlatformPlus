@@ -401,18 +401,24 @@ function global:Get-PlatformSecret
     # base query
     $query = "SELECT * FROM DataVault"
 
-    # if the Name parameter was used
-    if ($PSCmdlet.ParameterSetName -eq "Name")
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
     {
-        # append to the query
-        $query += ("WHERE SecretName = '{0}'" -f $Name)
-    }
-    # if the Uuid parameter was used
-    elseif ($PSCmdlet.ParameterSetName -eq "Uuid")
-    {
-        # append to the query
-        $query += ("WHERE ID = '{0}'" -f $uuid)
-    }
+        # arraylist for extra options
+        $extras = New-Object System.Collections.ArrayList
+
+        # appending the WHERE 
+        $query += " WHERE "
+
+        # setting up the extra conditionals
+        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("SecretName = '{0}'" -f $Name)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"         -f $Uuid)) | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
     # make the query
     $sqlquery = Query-VaultRedRock -SqlQuery $query
@@ -420,14 +426,21 @@ function global:Get-PlatformSecret
     # new ArrayList to hold multiple entries
     $secrets = New-Object System.Collections.ArrayList
 
-    # for each secret in the query
-    foreach ($secret in $sqlquery)
+    # if the query isn't null
+    if ($sqlquery -ne $null)
     {
-        # creating the PlatformSecret object
-        $obj = [PlatformSecret]::new($secret)
+        # for each secret in the query
+        foreach ($secret in $sqlquery)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Secrets into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            # creating the PlatformSecret object
+            $obj = [PlatformSecret]::new($secret)
 
-        $secrets.Add($obj) | Out-Null
-    }# foreach ($secret in $query)
+            $secrets.Add($obj) | Out-Null
+        }# foreach ($secret in $query)
+    }# if ($sqlquery -ne $null)
 
     # returning the secrets
     return $secrets
@@ -526,7 +539,7 @@ function global:Get-PlatformSecretWorkflowApprovers
 
     # for each approver found in the WorkflowApproversList
     foreach ($approver in $approvers.WorkflowApproversList)
-    {
+    {        
         # if the approver contains the NoManagerAction AND the BackupApprover Properties
         if ((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction") -and `
             (($approver | Get-Member -MemberType NoteProperty).Name).Contains("BackupApprover"))
@@ -624,6 +637,9 @@ function global:Get-PlatformSet
     {
         foreach ($q in $sqlquery)
         {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Sets into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
             Write-Verbose ("Working with [{0}] Set [{1}]" -f $q.Name, $q.ObjectType)
             # create a new Platform Set object
             $set = [PlatformSet]::new($q)
