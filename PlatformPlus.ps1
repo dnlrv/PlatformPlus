@@ -211,8 +211,11 @@ function global:Convert-PermissionToString
         "Server"           { $AceHash = @{ GrantServer = 1; ViewServer = 4; EditServer  = 8; DeleteServer = 64; AgentAuthServer = 65536; 
                                            ManageSessionServer = 128; RequestZoneRoleServer = 131072; AddAccountServer = 524288;
                                            UnlockAccountServer = 1048576; OfflineRescueServer = 2097152;  AddPrivilegeElevationServer = 4194304}; break }
-        "Account|VaultAccount" 
-                           { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; LoginAccount = 128; DeleteAccount = 64; CheckoutAccount = 65536; 
+        "Domain"           { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; DeleteAccount = 64; LoginAccount = 128; CheckoutAccount = 65536; 
+                                           UpdatePasswordAccount = 131072; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
+
+        "Local|Account|VaultAccount" 
+                           { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; DeleteAccount = 64; LoginAccount = 128;  CheckoutAccount = 65536; 
                                            UpdatePasswordAccount = 131072; WorkspaceLoginAccount = 262147; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
         "Database|VaultDatabase"
                            { $AceHash = @{ GrantDatabaseAccount = 1; ViewDatabaseAccount = 4; EditDatabaseAccount = 8; DeleteDatabaseAccount = 64;
@@ -265,10 +268,12 @@ function global:Get-PlatformRowAce
 
     Switch -Regex ($Type)
     {
-        "Secret"    { $table = "DataVault"   ; break }
+        "Secret"    { $table = "DataVault"    ; break }
         "Set|Phantom|ManualBucket|SqlDynamic"
-                    { $table = "Collections" ; break }
-        default     { $table = $Type         ; break }
+                    { $table = "Collections"  ; break }
+        "Domain|Database|Local"
+                    { $table = "VaultAccount" ; break }
+        default     { $table = $Type          ; break }
     }
 
     # preparing the JSONBody
@@ -289,13 +294,32 @@ function global:Get-PlatformRowAce
             continue
         }
 
-        # creating the PlatformPermission object
-        $platformpermission = [PlatformPermission]::new($Type, $rowace.Grant, `
-                              $rowace.GrantStr)
+        # if the type is Super (from default global roles with read permissions)
+        if ($rowace.Type -eq "Super")
+        {
+            # set the Grant to 4 instead of "Read"
+            [System.Int64]$rowace.Grant = 4
+        }
 
-        # creating the PlatformRowAce object
-        $obj = [PlatformRowAce]::new($rowace.PrincipalType, $rowace.Principal, `
-               $rowace.PrincipalName, $rowace.AceID, $platformpermission)
+        Try
+        {
+            # creating the PlatformPermission object
+            $platformpermission = [PlatformPermission]::new($Type, $rowace.Grant, $rowace.GrantStr)
+
+            # creating the PlatformRowAce object
+            $obj = [PlatformRowAce]::new($rowace.PrincipalType, $rowace.Principal, `
+            $rowace.PrincipalName, $rowace.Inherited, $platformpermission)
+        }# Try
+        Catch
+        {
+            # setting our custom Exception object and stuff for further review
+            $LastRowAceError = [PlatformRowAceException]::new("A PlatformRowAce error has occured. Check `$LastRowAceError for more information")
+            $LastRowAceError.RowAce = $rowace
+            $LastRowAceError.PlatformPermission = $platformpermission
+            $LastRowAceError.ErrorMessage = $_.Exception.Message
+            $global:LastRowAceError = $LastRowAceError
+            Throw $_.Exception
+        }# Catch
 
         # adding the PlatformRowAce object to our ArrayList
         $RowAceObjects.Add($obj) | Out-Null
@@ -365,15 +389,26 @@ function global:Get-PlatformCollectionRowAce
             continue
         }
 
-        # creating the PlatformPermission object
-        $platformpermission = [PlatformPermission]::new($Type, $collectionace.Grant, `
-                              $collectionace.GrantStr)
+        Try
+        {
+            # creating the PlatformPermission object
+            $platformpermission = [PlatformPermission]::new($Type, $collectionace.Grant, $collectionace.GrantStr)
 
-        # creating the PlatformRowAce object
-        $obj = [PlatformRowAce]::new($collectionace.PrincipalType, $collectionace.Principal, `
-               $collectionace.PrincipalName, $collectionace.AceID, $platformpermission)
+            # creating the PlatformRowAce object
+            $obj = [PlatformRowAce]::new($collectionace.PrincipalType, $collectionace.Principal, `
+            $collectionace.PrincipalName, $collectionace.Inherited, $platformpermission)
+        }# Try
+        Catch
+        {
+            # setting our custom Exception object and stuff for further review
+            $LastRowAceError = [PlatformRowAceException]::new("A PlatformRowAce error has occured. Check `$LastRowAceError for more information")
+            $LastRowAceError.RowAce = $collectionace
+            $LastRowAceError.PlatformPermission = $platformpermission
+            $LastRowAceError.ErrorMessage = $_.Exception.Message
+            $global:LastRowAceError = $LastRowAceError
+            Throw $_.Exception
+        }# Catch
 
-        # adding the PlatformRowAce object to our ArrayList
         $CollectionAceObjects.Add($obj) | Out-Null
     }# foreach ($collectionace in $CollectionAces)
 
@@ -511,34 +546,21 @@ function global:Get-PlatformWorkflowApprover
 ###########
 
 ###########
-#region ### global:Get-PlatformSecretWorkflowApprovers # Gets all Workflow Approvers for a Secret
+#region ### global:Prepare-WorkflowApprovers # Prepares Workflow Approvers
 ###########
-function global:Get-PlatformSecretWorkflowApprovers
+function global:Prepare-WorkflowApprovers
 {
     param
     (
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the secret to search.",ParameterSetName = "Name")]
-        [System.String]$Name,
-
-        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
-        [System.String]$Uuid
+        [Parameter(Mandatory = $true, HelpMessage = "The Workflow Approvers converted from.")]
+        $Approvers
     )
 
-    # if the Name parameter was used
-    if ($PSBoundParameters.ContainsKey("Name"))
-    {
-        # getting the uuid of the object
-        $uuid = Get-PlatformObjectUuid -Type Secret -Name $Name
-    }
-
-    # new ArrayList for storing our special workflow approver objects
+    # setting a new ArrayList object
     $WorkflowApprovers = New-Object System.Collections.ArrayList
 
-    # getting the original approvers by API call
-    $approvers = Invoke-PlatformAPI -APICall ServerManage/GetSecretApprovers -Body (@{ ID = $uuid } | ConvertTo-Json)
-
-    # for each approver found in the WorkflowApproversList
-    foreach ($approver in $approvers.WorkflowApproversList)
+    # for each workflow approver
+    foreach ($approver in $Approvers)
     {        
         # if the approver contains the NoManagerAction AND the BackupApprover Properties
         if ((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction") -and `
@@ -577,6 +599,39 @@ function global:Get-PlatformSecretWorkflowApprovers
         $WorkflowApprovers.Add($obj) | Out-Null
     }# foreach ($approver in $approvers.WorkflowApproversList)
 
+    # returning the ArrayList
+    return $WorkflowApprovers
+}# function global:Prepare-WorkflowApprovers
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformSecretWorkflowApprovers # Gets all Workflow Approvers for a Secret
+###########
+function global:Get-PlatformSecretWorkflowApprovers
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the secret to search.",ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # if the Name parameter was used
+    if ($PSBoundParameters.ContainsKey("Name"))
+    {
+        # getting the uuid of the object
+        $uuid = Get-PlatformObjectUuid -Type Secret -Name $Name
+    }
+
+    # getting the original approvers by API call
+    $approvers = Invoke-PlatformAPI -APICall ServerManage/GetSecretApprovers -Body (@{ ID = $uuid } | ConvertTo-Json)
+
+    # preparing the workflow approver list
+    $WorkflowApprovers = Prepare-WorkflowApprovers -Approvers ($approvers.WorkflowApproversList)
+    
     # returning the ArrayList
     return $WorkflowApprovers
 }# function global:Get-PlatformSecretWorkflowApprovers
@@ -696,6 +751,104 @@ function global:Verify-PlatformCredentials
 ###########
 
 ###########
+#region ### global:Get-PlatformAccount # Gets a Platform Account object
+###########
+function global:Get-PlatformAccount
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
+        [ValidateSet("Local","Domain","Database")]
+        [System.String]$Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Source")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Type")]
+        [System.String]$SourceName,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Account to search.", ParameterSetName = "Name")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
+        [System.String]$UserName,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to search.",ParameterSetName = "Uuid")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
+        [System.String]$Uuid
+    )
+
+    # setting the base query
+    $query = "Select * FROM VaultAccount"
+
+    # arraylist for extra options
+    $extras = New-Object System.Collections.ArrayList
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
+    {
+        # appending the WHERE 
+        $query += " WHERE "
+
+        # setting up the extra conditionals
+        if ($PSBoundParameters.ContainsKey("Type"))
+        {
+            Switch ($Type)
+            {
+                "Domain"   { $extras.Add("DomainID NOT NULL") | Out-Null ; break }
+                "Database" { $extras.Add("DatabaseID NOT NULL") | Out-Null ; break }
+                "Local"    { $extras.Add("Host NOT NULL") | Out-Null ; break }
+            }
+        }# if ($PSBoundParameters.ContainsKey("Type"))
+        
+        if ($PSBoundParameters.ContainsKey("SourceName")) { $extras.Add(("Name = '{0}'" -f $SourceName)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("UserName"))   { $extras.Add(("User = '{0}'" -f $UserName))   | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid"))       { $extras.Add(("ID = '{0}'"   -f $Uuid))       | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # making the query
+    $sqlquery = Query-VaultRedRock -SQLQuery $query
+
+    # ArrayList to hold objects
+    $queries = New-Object System.Collections.ArrayList
+    
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        foreach ($q in $sqlquery)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Accounts into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            Write-Verbose ("Working with Account [{0}\{1}]" -f $q.Name, $q.User)
+
+            # minor placeholder to hold account type in case of all call
+            [System.String]$accounttype = $null
+
+            if ($q.DomainID -ne $null)   { $accounttype = "Domain"   }
+            if ($q.DatabaseID -ne $null) { $accounttype = "Database" }
+            if ($q.Host -ne $null)       { $accounttype = "Local"    }
+
+            # create a new Platform Account object
+            $account = [PlatformAccount]::new($q, $accounttype)
+
+            $queries.Add($account) | Out-Null
+        }# foreach ($q in $query)
+    }# if ($query -ne $null)
+    else
+    {
+        return $false
+    }
+    
+    #return $queries
+    return $queries
+}# function global:Get-PlatformAccount
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -726,7 +879,7 @@ class PlatformPermission
         $this.Type        = $t
         $this.GrantInt    = $gi
         $this.GrantBinary = $gb
-        $this.GrantString = Convert-PermissionToString -Type $t -PermissionInt $gi
+        $this.GrantString = Convert-PermissionToString -Type $t -PermissionInt ([System.Convert]::ToInt64($gb,2))
     }# PlatformPermission ([System.String]$t, [System.Int64]$gi, [System.String]$gb)
 }# class PlatformPermission
 
@@ -736,16 +889,16 @@ class PlatformRowAce
     [System.String]$PrincipalType           # the principal type
     [System.String]$PrincipalUuid           # the uuid of the prinicpal
     [System.String]$PrincipalName           # the name of the principal
-    [System.String]$AceID                   # the uuid of this RowAce
+    [System.Boolean]$isInherited            # determines if this permission is inherited
     [PlatformPermission]$PlatformPermission # the platformpermission object
 
     PlatformRowAce([System.String]$pt, [System.String]$puuid, [System.String]$pn, `
-                   [System.String]$aid, [PlatformPermission]$pp)
+                   [System.Boolean]$ii, [PlatformPermission]$pp)
     {
         $this.PrincipalType      = $pt
         $this.PrincipalUuid      = $puuid
         $this.PrincipalName      = $pn
-        $this.AceId              = $aid
+        $this.isInherited        = $ii
         $this.PlatformPermission = $pp
     }# PlatformRowAce([System.String]$pt, [System.String]$puuid, [System.String]$pn, `
 }# class PlatformRowAce
@@ -767,7 +920,8 @@ class PlatformSecret
     [System.String]$SecretFileSize                 # (File Secrets) The file size of the Secret
     [System.String]$SecretFilePath                 # (File Secrets) The download FilePath for this Secret
     [PlatformRowAce[]]$RowAces                     # The RowAces (Permissions) of this Secret
-    [PlatformWorkflowApprover[]]$WorkflowApprovers # the workflow approvers for this Secret
+    [System.Boolean]$WorkflowEnabled               # is Workflow enabled
+    [PlatformWorkflowApprover[]]$WorkflowApprovers # the Workflow Approvers for this Secret
 
     PlatformSecret ($secretinfo)
     {
@@ -778,6 +932,7 @@ class PlatformSecret
         $this.ID = $secretinfo.ID
         $this.FolderId = $secretinfo.FolderId
         $this.whenCreated = $secretinfo.whenCreated
+        $this.WorkflowEnabled = $secretinfo.WorkflowEnabled
         
         # if the secret has been updated
         if ($secretinfo.WhenContentsReplaced -ne $null)
@@ -810,8 +965,12 @@ class PlatformSecret
         # getting the RowAces for this secret
         $this.RowAces = Get-PlatformRowAce -Type Secret -Uuid $this.ID
 
-        # getting the WorkflowApprovers for this secret
-        $this.WorkflowApprovers = Get-PlatformSecretWorkflowApprovers -Uuid $this.ID
+        # if Workflow is enabled
+        if ($this.WorkflowEnabled)
+        {
+            # get the WorkflowApprovers for this secret
+            $this.WorkflowApprovers = Get-PlatformSecretWorkflowApprovers -Uuid $this.ID
+        }
     }# PlatformSecret ($secretinfo)
 
     # method to retrieve secret content
@@ -999,16 +1158,50 @@ class PlatformAccount
     [System.String]$AccountType
     [System.String]$SourceName
     [System.String]$SourceID
-    [System.String]$Name
     [System.String]$Username
+    [System.String]$ID
     [System.Boolean]$isManaged
+    [System.String]$Healthy
+    [System.DateTime]$LastHealthCheck
     [System.String]$Password
     [System.String]$Description
-    [PlatformRowAce[]]$RowAces                     # The RowAces (Permissions) of this Account
+    [PlatformRowAce[]]$PermissionRowAces           # The RowAces (Permissions) of this Account
+    [System.Boolean]$WorkflowEnabled
     [PlatformWorkflowApprover[]]$WorkflowApprovers # the workflow approvers for this Account
 
-    PlatformAccount($account)
+    PlatformAccount($account, [System.String]$t)
     {
+       
+        $this.AccountType = $t
+        $this.SourceName = $account.Name
+
+        # the tenant holds the source object's ID in different columns
+        Switch ($this.AccountType)
+        {
+            "Database" { $this.SourceID = $account.DatabaseID; break }
+            "Domain"   { $this.SourceID = $account.DomainID; break }
+            "Local"    { $this.SourceID = $account.Host; break }
+        }
+
+        $this.Username = $account.User
+        $this.ID = $account.ID
+        $this.isManaged = $account.IsManaged
+        $this.Healthy = $account.Healthy
+        $this.LastHealthCheck = $account.LastHealthCheck
+        $this.Description = $this.Description
+
+        # getting the RowAces for this Set
+        $this.PermissionRowAces = Get-PlatformRowAce -Type $this.AccountType -Uuid $this.ID
+
+        # getting the WorkflowApprovers for this secret
+        $this.WorkflowEnabled = $account.WorkflowEnabled
+        
+        # getting the WorkflowApprovers for this Account
+        if ($this.WorkflowEnabled)
+        {
+            $this.WorkflowApprovers = Prepare-WorkflowApprovers -Approvers ($account.WorkflowApproversList | ConvertFrom-Json)
+        }
+
     }# PlatformAccount($account)
 
     getPassword()
@@ -1027,6 +1220,18 @@ class PlatformAPIException : System.Exception
     PlatformAPIException([System.String]$message) : base ($message) {}
 
     PlatformAPIException() {}
+}
+
+# class to hold a custom RowAce error
+class PlatformRowAceException : System.Exception
+{
+    [PSCustomObject]$RowAce
+    [PlatformPermission]$PlatformPermission
+    [System.String]$ErrorMessage
+
+    PlatformRowAceException([System.String]$message) : base ($message) {}
+
+    PlatformRowAceException() {}
 }
 #######################################
 #endregion ############################
