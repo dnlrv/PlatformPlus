@@ -1,7 +1,5 @@
 # PlatformPlus
-PlatformPlus is an enhancement script to the Centrify Platform PowerShell module (https://github.com/centrify/powershell-sdk).
-
-The intent is to add ease of use with certain queries when working directly with a Centrify tenant once you are authenticated.
+The intent is to add ease of use with certain queries when working directly with a Delinea PAS tenant once you are authenticated. This script provides new functions and classes to work with data within your PAS tenant.
 
 ## Installation
 
@@ -12,9 +10,8 @@ To install the script via the command line, run the following:
 
 ## Requirements
 
-This script has a few requirements:
- - The Centrify Platform PowerShell module installed on your system. (https://github.com/centrify/powershell-sdk).
- - Authenticated to your Centrify tenant via the Connect-CentrifyPlatform cmdlet.
+This script has only one requirement:
+ - Authenticated to your PAS tenant via the Connect-DelineaPlatform cmdlet.
    - You can authenticated either interactively or using a bearer token, it does not matter. Only that the $PlatformConnection variable exists.
 
 All results are based on your existing tenant permissions. If you are not getting expected results, ensure that your tenant permissions are accurate.
@@ -23,7 +20,20 @@ This script does not require privilege elevation to run.
 
 ## Usage
 
-The following functions are now available once this script is executed:
+The following major functions are now available once this script is executed. A number of sub functions are also available, but they are primarily used to support the major functions and are not intended to be used directly.
+
+### Verify-PlatformConnection
+
+This function simply checks if you have an existing connection to a PAS tenant. Returns if $PlatformConnection is not null. Breaks with a message to the console if $PlatformConnection is null.
+
+#### Syntax
+```
+PS:> Verify-PlatformConnection  [<CommonParameters>]
+```
+#### Example
+```
+PS:> Verify-PlatformConnection
+````
 
 ### Invoke-PlatformAPI
 
@@ -68,248 +78,123 @@ CENTOS701                     aaaaaaaa-0000-0000-0000-ffffffffffff
 CFYADMIN.domain.com           aaaaaaaa-0000-0000-0000-gggggggggggg
 ```
 
-### Get-PlatformObjectUuid
-
-This function enables you to retrieve the Uuid of a specified Platform object.
-
-#### Syntax
-```
-PS:> Get-PlatformObjectUuid [-Type] <string> [-Name] <string> [<CommonParameters>]
-```
- - Type - The type of the object. Currently only "Secret" and "Set" is supported.
-   - for example: "Secret"
- - Name - The name of the object to get.
-
-#### Example
-```
-PS:> Get-PlatformObjectUuid -Type Secret -Name FileSecret1
-aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
-````
-
-### Convert-PermissionToString
-
-This function enables you to convert a permission-based Grant integer to a human-readable string.
-
-#### Syntax
-```
-PS:> Convert-PermissionToString [-Type] <string> [-PermissionInt] <Int32> [<CommonParameters>]
-```
- - Type - The type of the object. Currently only "Secret" is supported.
-   - for example: "Secret"
- - PermissionInt - The Grant integer number to convert to human-readable format.
-
-#### Example
-```
-PS:> Convert-PermissionToString -Type Secret -PermissionInt 65613
-DeleteSecret|RetrieveSecret|EditSecret|ViewSecret|GrantSecret
-````
-
-### Get-PlatformRowAce
-
-This function enables you to get all RowAces for a specified platform object.
-It is advisable to convert this output to JSON before exporting to a file.
-
-#### Syntax
-```
-PS:> Get-PlatformRowAce [-Type] <string> [-Name] <string> [<CommonParameters>]
-
-OR
-
-PS:> Get-PlatformSecret [-Type] <string> [-Uuid] <string>  [<CommonParameters>]
-```
- - Type - The type of the object. Currently only "Secret" is supported.
-   - for example: "Secret"
- - Name - The name of the object to get.
- - Uuid - The Uuid of the object to get.
-
-#### Example
-```
-PS:> Get-PlatformRowAce -Type Secret -Name FileSecret1
-
-PrincipalType      : User
-PrincipalUuid      : aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
-PrincipalName      : serviceuser@domain
-AceID              : aaaaaaaa-aaaa-aaaa-bbbb-aaaaaaaaaaaa
-PlatformPermission : PlatformPermission
-
-PrincipalType      : User
-PrincipalUuid      : cccccccc-cccc-cccc-cccc-cccccccccccc
-PrincipalName      : cloudadmin@domain
-AceID              : cccccccc-cccc-cccc-dddd-cccccccccccc
-PlatformPermission : PlatformPermission
-````
-
 ### Get-PlatformSecret
 
-This function enables you to get a new PlatformSecret object from the tenant.
+This function enables you to get Secret objects from the PAS tenant. Using the function without any parameters will get all Secret objects in the PAS tenant.
 
 #### Syntax
 ```
-PS:> Get-PlatformSecret [-Name] <string>  [<CommonParameters>]
-
-OR 
-
-PS:> Get-PlatformSecret [-Uuid] <string>  [<CommonParameters>]
+PS:> Get-PlatformSecret [-Name <string>] [-Uuid <string>] [<CommonParameters>]
 ```
- - Name - The name of the Secret to get.
-   - for example: "TextSecret1"
- - Uuid - The Uuid of the Secret to get.
-   - for example: "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
-     - this version would always return only one Secret.
+ - Name - The name of the Secret object to get.
+ - Uuid - The Uuid of the Secret object to get.
 
 #### Example
 ```
-PS:> Get-PlatformSecret -Name TextSecret2
+PS:> Get-PlatformSecret -Name FileSecret1
 
-Name           : TextSecret2
-Type           : Text
-ParentPath     : .
-Description    : Descript2
-ID             : aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
-FolderId       :
-whenCreated    : 2/11/2021 7:40:42 PM
-whenModified   : 1/19/2022 6:16:43 PM
-SecretText     :
-SecretFileName :
-SecretFileSize :
-SecretFilePath :
-RowAces        : {cloudadmin@domain}
-```
-
-#### Output
-
-Get-PlatformSecret produces a new PlatformSecret object which has two relevant methods:
-
-##### RetrieveSecret()
-
-For Text Secrets, this will retrieve the contents of the Text Secret and store it in the SecretText member property.
-
-For File Secrets, this will retrieve the special FileDownloadUrl needed to download the file and store that URL in the SecretFilePath member property.
-
-##### ExportSecret()
-
-For Text Secrets, this will export the contents of the SecretText member property into a .txt file with the same name as the Secret, in the directory that it exists currently according to the ParentPath.
-
-For File Secrets, this will download the Secret File in the directory that it exists currently according to the ParentPath.
-
-### Get-PlatformWorkflowApprover
-
-This function enables you perform a search for Approver information based on name of user or name of role. Should be used in conjunction when working with Workflow gets/sets.
-
-#### Syntax
-```
-PS:> Get-PlatformWorkflowApprover [-User] <string> [<CommonParameters>]
-
-OR
-
-PS:> Get-PlatformWorkflowApprover [-Role] <string>  [<CommonParameters>]
-```
- - User - The name of the User to search.
-   - for example: "cloudadmin@domain.com"
- - Role - The name of the Role to search.
-   - for example: "Widget Owners"
-
-#### Example
-```
-PS:> Get-PlatformWorkflowApprover -Role "System Administrator"
-
-Name                 : System Administrator
-Guid                 : sysadmin
-_ID                  : sysadmin
-Principal            : System Administrator
-Description          : The primary administrative role for the Admin
-                       Portal. Users in this role can delegate specific
-                       administrative rights to other roles who require
-                       more limited administrative access.
-RoleType             : PrincipalList
-ReadOnly             : False
-DirectoryServiceUuid : AAAAAAAA-EEEE-EEEE-EEEE-EEEEEEEEEEEE
-Type                 : Role
-PType                : Role
-ObjectType           : Role
-OptionsSelector      : True
-````
-
-### Get-PlatformSecretWorkflowApprovers
-
-This function enables you get all Workflow Approvers for a specified Secret. Returns $null if Workflow is not approved for this Secret.
-
-#### Syntax
-```
-PS:> Get-PlatformSecretWorkflowApprovers [-Name] <string> [<CommonParameters>]
-
-OR
-
-PS:> Get-PlatformSecretWorkflowApprovers [-Uuid] <string>  [<CommonParameters>]
-```
- - Name - The name of the Secret to get.
-   - for example: "TextSecret1"
- - Uuid - The Uuid of the Secret to get.
-   - for example: "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
-     - this version would always return only one Secret.
-
-#### Example
-```
-PS:> Get-PlatformSecretWorkflowApprovers -Uuid "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
-
-isBackUp                 : False
-NoManagerAction          :
-DisplayName              : cloudadmin
-ObjectType               : User
-DistinguishedName        : cloudadmin@domain
-DirectoryServiceUuid     : bbbbbbbb-cccc-cccc-cccc-eeeeeeeeeeee
-SystemName               : cloudadmin@qtglab
-ServiceInstance          : CDS
-PType                    : User
-Locked                   : False
-InternalName             : cccccccc-dddd-dddd-dddd-dddddddddddd
-StatusEnum               : Active
-ServiceInstanceLocalized : Centrify Directory
-ServiceType              : CDS
-Type                     : User
-Name                     : cloudadmin@domain
-Email                    : user@domain.com
-Status                   : Active
-Enabled                  : True
-Principal                : cloudadmin@domain
-Guid                     : ffffffff-eeee-eeee-eeee-eeeeeeeeeeee
-OptionsSelector          : True
-RoleType                 :
-_ID                      :
-ReadOnly                 : False
-Description              :
+Name              : FileSecret1
+Type              : File
+ParentPath        : .
+Description       : This is the decsription
+ID                : aaaaaaaa-aaaa-aaaa-aaaa-cccccccccccc
+FolderId          :
+whenCreated       : 2/11/2021 7:40:43 PM
+whenModified      : 1/1/0001 12:00:00 AM
+lastRetrieved     : 1/28/2022 1:37:05 PM
+SecretText        :
+SecretFileName    : config.txt
+SecretFileSize    : 171 B
+SecretFilePath    :
+RowAces           : {serviceuser@domain.com, cloudadmin@domain.com,
+                    dave.smith@domain.com, servicedesk@domain.com}
+WorkflowEnabled   : True
+WorkflowApprovers : {cloudadmin@domain.com, servicedesk@domain.com}
 ````
 
 ### Get-PlatformSet
 
-This function enables you get a Set object from the tenant.
+This function enables you to get Set objects from the PAS tenant. Using the function without any parameters will get all Set objects in the PAS tenant.
 
-**Important: At this time, there is no way to distinguish the original creator of the Set object. This means that poorly named Sets with little to no description might be difficult to understand the purpose of the Set. It is recommended that the Set object be analyzed to determine if it should be migrated or not.**
+These Set objects will also get basic information about the members of these Sets.
 
 #### Syntax
 ```
-PS:> Get-PlatformSet [-Name] <string> [<CommonParameters>]
-
-OR
-
-PS:> Get-PlatformSet [-Uuid] <string>  [<CommonParameters>]
+PS:> Get-PlatformSet [-Type <string>] [-Name <string>] [-Uuid <string>]  [<CommonParameters>]
 ```
- - Name - The name of the Setto get.
-   - for example: "Secret Set 1"
- - Uuid - The Uuid of the Set to get.
-   - for example: "aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"
-
+ - Type - The Type of the Set object to get.
+  - Currently, only the following options are supported:
+   - System - For System Sets.
+   - Database - For Database Sets.
+   - Account - For Account Sets.
+   - Secret - For Secret Sets.
+ - Name - The Name of the Set object to get.
+ - Uuid - The Uuid of the Set object to get.
 #### Example
 ```
-PS:> Get-PlatformSet -Type Secret -Name "Secret Set 1"
+PS:> Get-PlatformSet -Name "Williams Accounts"
 
-ObjectType              : DataVault
-Name                    : Secret Set 1
-ID                      : aaaaaaaa-0000-0000-0000-eeeeeeeeeeee
-Description             : Description of Secret Set 1
-whenCreated             : 1/18/2022 3:49:10 PM
-PermissionRowAces       : {cloudadmin@domain, conman@domain}
-MemberPermissionRowAces : {conman@domain}
-Members                 : {bbbbbbbb-0000-0000-0000-eeeeeeeeeeee,
-                          cccccccc-0000-0000-0000-eeeeeeeeeeee}
+SetType                 : ManualBucket
+ObjectType              : VaultAccount
+Name                    : Williams Accounts
+ID                      : aaaaaaaa-aaaa-aaaa-aaaa-cccccccccccc
+Description             :
+whenCreated             : 2/7/2022 7:51:14 PM
+PermissionRowAces       : {cloudadmin@domain.com}
+MemberPermissionRowAces :
+MembersUuid             : {51c08e41-a532-4501-a25a-9128f3458cfa,
+                          f49d922d-e73b-4024-8ccf-354ad0cbfe87}
+SetMembers              : {CENTOS701\root, CFYADMIN\Administrator}
+PotentialOwner          : cloudadmin@domain.com
+````
+
+### Get-PlatformAccount
+
+This function enables you to get Account objects from the PAS tenant. Using the function without any parameters will get all Account objects in the PAS tenant.
+
+#### Syntax
+```
+PS:> Get-PlatformAccount [-Type <string>] [-SourceName <string>] [-UserName <string>] [-Uuid <string>]  [<CommonParameters>]
+```
+ - Type - The Type of the Account object to get.
+  - Currently, only the following options are supported:
+   - Local - For Local Accounts.
+   - Domain - For Domain Accounts.
+   - Database - For Database Accounts.
+ - SourceName - The name of the parent object holding the account.
+ - UserName - The user name of the Account.
+ - Uuid - The Uuid of the Account object.
+#### Example
+```
+PS:> Get-PlatformAccount -Type Domain -Username Administrator
+
+AccountType       : Domain
+SourceName        : domain.com
+SourceID          : aaaaaaaa-aaaa-aaaa-aaaa-cccccccccccc
+Username          : Administrator
+ID                : aaaaaaaa-aaaa-aaaa-aaaa-dddddddddddd
+isManaged         : False
+Healthy           : OK
+LastHealthCheck   : 1/11/2021 7:16:25 PM
+Password          :
+Description       :
+PermissionRowAces : {cloudadmin@domain.com, Demo Role,
+                    Everybody...}
+WorkflowEnabled   : True
+WorkflowApprovers : {servicedesk@domain.com, System Administrator}
+````
+
+### Verify-PlatformCredentials
+
+This function enables you to Verify Account Credentials for a specified vaulted account. Returns TRUE if the credentials known by the PAS vault are correct. Returns FALSE if credentials are invalid, or a connection to verify could not be completed.
+
+#### Syntax
+```
+PS:> Verify-PlatformCredentials [-Uuid <string>]  [<CommonParameters>]
+```
+ - Uuid - The Uuid of the Account object to check.
+#### Example
+```
+PS:> Verify-PlatformCredentials -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-cccccccccccc"
+True
 ````
