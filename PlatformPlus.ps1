@@ -1,44 +1,18 @@
 #######################################
-#region ### FUNCTIONS #################
+#region ### MAJOR FUNCTIONS ###########
 #######################################
 
 ###########
-#region ### Check-Module # Checks for and imports the necessary PowerShell modules.
+#region ### Verify-PlatformConnection # Check to ensure you are connected to the tenant before proceeding.
 ###########
-function Check-Module
+function global:Verify-PlatformConnection
 {
-    Param
-    (
-        [Parameter(Position = 0, HelpMessage="The module to check.")]
-        [System.String]$Module
-
-    )# Param
-
-    # if the module hasn't already been imported
-    if (-Not (Get-Module).Name.Contains($Module))
+    if ($PlatformConnection -eq $null)
     {
-        # if the module is available
-        if ((Get-Module -ListAvailable).Name.Contains($Module))
-        {
-            # try importing it
-            Try
-            {
-                Import-Module -Name $Module -DisableNameChecking
-            }
-            Catch
-            {
-                Write-Error ("An error occurred while trying to import the {0} module. This is required. [{1}]" -f $Module, $_.Exception.Message)
-                Write-Error ($_.Exception.Message)
-                Exit 2 # EXITCODE 2 : Unknown error while importing required module.
-            }
-        }# if ((Get-Module -ListAvailable).Name.Contains($Module))
-        else
-        {
-            Write-Error ("The required module [{0}] does not seemed to be installed." -f $Module)
-            Exit 1 #  EXITCODE 1 : Required module not found.
-        }
-    }# if (-Not (Get-Module).Contains($Module))
-}# function Check-Module
+        Write-Host ("There is no existing `$PlatformConnection. Please use Connect-DelineaPlatform to connect to your Delinea tenant. Exiting.")
+        break
+    }
+}# function global:Verify-PlatformConnection
 #endregion
 ###########
 
@@ -55,6 +29,9 @@ function global:Invoke-PlatformAPI
         [Parameter(Mandatory = $false, HelpMessage = "Specify the JSON Body payload.")]
         [System.String]$Body
     )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
 
     # setting the url based on our PlatformConnection information
     $uri = ("https://{0}/{1}" -f $global:PlatformConnection.PodFqdn, $APICall)
@@ -105,6 +82,9 @@ function global:Query-VaultRedRock
 		[System.String]$SQLQuery
     )
 
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
     # Set Arguments
 	$Arguments = @{}
 	$Arguments.PageNumber 	= 1
@@ -126,6 +106,664 @@ function global:Query-VaultRedRock
     # return the rows that were queried
     return $RedRockResponse.Results.Row
 }# function global:Query-VaultRedRock
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformSecret # Gets a PlatformSecret object from the tenant
+###########
+function global:Get-PlatformSecret
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the secret to search.",ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    # base query
+    $query = "SELECT * FROM DataVault"
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
+    {
+        # arraylist for extra options
+        $extras = New-Object System.Collections.ArrayList
+
+        # appending the WHERE 
+        $query += " WHERE "
+
+        # setting up the extra conditionals
+        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("SecretName = '{0}'" -f $Name)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"         -f $Uuid)) | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # make the query
+    $sqlquery = Query-VaultRedRock -SqlQuery $query
+
+    # new ArrayList to hold multiple entries
+    $secrets = New-Object System.Collections.ArrayList
+
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        # for each secret in the query
+        foreach ($secret in $sqlquery)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Secrets into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            # creating the PlatformSecret object
+            $obj = [PlatformSecret]::new($secret)
+
+            $secrets.Add($obj) | Out-Null
+        }# foreach ($secret in $query)
+    }# if ($sqlquery -ne $null)
+
+    # returning the secrets
+    return $secrets
+}# lobal:Get-PlatformSecret
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformSet # Gets a Platform Set object
+###########
+function global:Get-PlatformSet
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The type of Set to search.", ParameterSetName = "Type")]
+        [ValidateSet("System","Database","Account","Secret")]
+        [System.String]$Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Name")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Set to search.",ParameterSetName = "Uuid")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
+        [System.String]$Uuid
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    # setting the base query
+    $query = "Select * FROM Sets"
+
+    # arraylist for extra options
+    $extras = New-Object System.Collections.ArrayList
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
+    {
+        # placeholder to translate type names
+        [System.String] $newtype = $null
+
+        # switch to translate backend naming convention
+        Switch ($Type)
+        {
+            "System"   { $newtype = "Server" ; break }
+            "Database" { $newtype = "VaultDatabase" ; break }
+            "Account"  { $newtype = "VaultAccount" ; break }
+            "Secret"   { $newtype = "DataVault" ; break }
+            default    { }
+        }# Switch ($Type)
+
+        # appending the WHERE 
+        $query += " WHERE "
+
+        # setting up the extra conditionals
+        if ($PSBoundParameters.ContainsKey("Type")) { $extras.Add(("ObjectType = '{0}'" -f $newtype)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("Name = '{0}'"       -f $Name))    | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"         -f $Uuid))    | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # making the query
+    $sqlquery = Query-VaultRedRock -SQLQuery $query
+
+    # ArrayList to hold objects
+    $queries = New-Object System.Collections.ArrayList
+    
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        foreach ($q in $sqlquery)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Sets into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            Write-Verbose ("Working with [{0}] Set [{1}]" -f $q.Name, $q.ObjectType)
+            # create a new Platform Set object
+            $set = [PlatformSet]::new($q)
+
+            # if the Set is a Manual Set (not a Folder or Dynamic Set)
+            if ($set.SetType -eq "ManualBucket")
+            {
+                # get the Uuids of the members
+                $set.GetMembers()
+            }
+
+            # determin the potential owner of the Set
+            $set.determineOwner()
+
+            $queries.Add($set) | Out-Null
+        }# foreach ($q in $query)
+    }# if ($query -ne $null)
+    else
+    {
+        return $false
+    }
+    
+    #return $set
+    return $queries
+}# function global:Get-PlatformSet
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformAccount # Gets a Platform Account object
+###########
+function global:Get-PlatformAccount
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
+        [ValidateSet("Local","Domain","Database")]
+        [System.String]$Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Source")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Type")]
+        [System.String]$SourceName,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Account to search.", ParameterSetName = "Name")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
+        [System.String]$UserName,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to search.",ParameterSetName = "Uuid")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
+        [System.String]$Uuid
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    # setting the base query
+    $query = "Select * FROM VaultAccount"
+
+    # arraylist for extra options
+    $extras = New-Object System.Collections.ArrayList
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
+    {
+        # appending the WHERE 
+        $query += " WHERE "
+
+        # setting up the extra conditionals
+        if ($PSBoundParameters.ContainsKey("Type"))
+        {
+            Switch ($Type)
+            {
+                "Domain"   { $extras.Add("DomainID NOT NULL") | Out-Null ; break }
+                "Database" { $extras.Add("DatabaseID NOT NULL") | Out-Null ; break }
+                "Local"    { $extras.Add("Host NOT NULL") | Out-Null ; break }
+            }
+        }# if ($PSBoundParameters.ContainsKey("Type"))
+        
+        if ($PSBoundParameters.ContainsKey("SourceName")) { $extras.Add(("Name = '{0}'" -f $SourceName)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("UserName"))   { $extras.Add(("User = '{0}'" -f $UserName))   | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid"))       { $extras.Add(("ID = '{0}'"   -f $Uuid))       | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # making the query
+    $sqlquery = Query-VaultRedRock -SQLQuery $query
+
+    # ArrayList to hold objects
+    $queries = New-Object System.Collections.ArrayList
+    
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        foreach ($q in $sqlquery)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Accounts into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            Write-Verbose ("Working with Account [{0}\{1}]" -f $q.Name, $q.User)
+
+            # minor placeholder to hold account type in case of all call
+            [System.String]$accounttype = $null
+
+            if ($q.DomainID -ne $null)   { $accounttype = "Domain"   }
+            if ($q.DatabaseID -ne $null) { $accounttype = "Database" }
+            if ($q.Host -ne $null)       { $accounttype = "Local"    }
+
+            # create a new Platform Account object
+            $account = [PlatformAccount]::new($q, $accounttype)
+
+            $queries.Add($account) | Out-Null
+        }# foreach ($q in $query)
+    }# if ($query -ne $null)
+    else
+    {
+        return $false
+    }
+    
+    #return $queries
+    return $queries
+}# function global:Get-PlatformAccount
+#endregion
+###########
+
+###########
+#region ### global:Verify-PlatformCredentials # Verifies the password is health for the specified account
+###########
+function global:Verify-PlatformCredentials
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to check.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    $response = Invoke-PlatformAPI -APICall ServerManage/CheckAccountHealth -Body (@{ ID = $Uuid } | ConvertTo-Json)
+
+    if ($response -eq "OK")
+    {
+        [System.Boolean]$responseAnswer = $true
+    }
+    else
+    {
+        [System.Boolean]$responseAnswer = $false
+    }
+    
+    return $responseAnswer
+}# function global:Verify-PlatformCredentials
+#endregion
+###########
+
+###########
+#region ### global:TEMPLATE # TEMPLATE
+###########
+#function global:Invoke-TEMPLATE
+#{
+#}# function global:Invoke-TEMPLATE
+#endregion
+###########
+
+#######################################
+#endregion ############################
+#######################################
+
+#######################################
+#region ### SUB FUNCTIONS #############
+#######################################
+
+###########
+#region ### global:Get-PlatformBearerToken # Gets Platform Bearer Token information. Derived from Centrify.Platform.PowerShell.
+###########
+function global:Get-PlatformBearerToken
+{
+    param(
+        [Parameter(Mandatory=$true, HelpMessage = "Specify the URL to connect to.")]
+        [System.String]$Url,
+        
+        [Parameter(Mandatory=$true, HelpMessage = "Specify the OAuth2 Client name.")]
+		[System.String]$Client,	
+
+        [Parameter(Mandatory=$true, HelpMessage = "Specify the OAuth2 Scope name.")]
+		[System.String]$Scope,	
+
+        [Parameter(Mandatory=$true, HelpMessage = "Specify the OAuth2 Secret.")]
+		[System.String]$Secret		
+    )
+
+    # Setup variable for connection
+	$Uri = ("https://{0}/oauth2/token/{1}" -f $Url, $Client)
+	$ContentType = "application/x-www-form-urlencoded" 
+	$Header = @{ "X-CENTRIFY-NATIVE-CLIENT" = "True"; "Authorization" = ("Basic {0}" -f $Secret) }
+	Write-Host ("Connecting to Delinea Platform (https://{0}) using OAuth2 Client Credentials flow" -f $Url)
+			
+    # Format body
+    $Body = ("grant_type=client_credentials&scope={0}" -f  $Scope)
+	
+	# Debug informations
+	Write-Debug ("Uri= {0}" -f $Uri)
+	Write-Debug ("Header= {0}" -f $Header)
+	Write-Debug ("Body= {0}" -f $Body)
+    		
+	# Connect using OAuth2 Client
+	$WebResponse = Invoke-WebRequest -UseBasicParsing -Method Post -SessionVariable PASSession -Uri $Uri -Body $Body -ContentType $ContentType -Headers $Header
+    $WebResponseResult = $WebResponse.Content | ConvertFrom-Json
+    if ([System.String]::IsNullOrEmpty($WebResponseResult.access_token))
+    {
+        Throw "OAuth2 Client authentication error."
+    }
+	else
+    {
+        # Return Bearer Token from successfull login
+        return $WebResponseResult.access_token
+    }
+}# function global:Get-PlatformBearerToken
+#endregion
+###########
+
+###########
+#region ### global:Connect-DelineaPlatform # Connects the user to a Delinea PAS tenant. Derived from Centrify.Platform.PowerShell.
+###########
+function global:Connect-DelineaPlatform
+{
+	param
+	(
+		[Parameter(Mandatory = $false, Position = 0, HelpMessage = "Specify the URL to use for the connection (e.g. oceanlab.my.centrify.com).")]
+		[Parameter(ParameterSetName = "Interactive")]
+		[System.String]$Url,
+		
+		[Parameter(Mandatory = $true, ParameterSetName = "Interactive", HelpMessage = "Specify the User login to use for the connection (e.g. CloudAdmin@oceanlab.my.centrify.com).")]
+		[System.String]$User,
+
+		[Parameter(Mandatory = $true, ParameterSetName = "OAuth2", HelpMessage = "Specify the OAuth2 Client ID to use to obtain a Bearer Token.")]
+        [System.String]$Client,
+
+		[Parameter(Mandatory = $true, ParameterSetName = "OAuth2", HelpMessage = "Specify the OAuth2 Scope Name to claim a Bearer Token for.")]
+        [System.String]$Scope,
+
+		[Parameter(Mandatory = $true, ParameterSetName = "OAuth2", HelpMessage = "Specify the OAuth2 Secret to use for the ClientID.")]
+        [System.String]$Secret
+	)
+	
+	# Debug preference
+	if ($PSCmdlet.MyInvocation.BoundParameters["Debug"].IsPresent)
+	{
+		# Debug continue without waiting for confirmation
+		$DebugPreference = "Continue"
+	}
+	else 
+	{
+		# Debug message are turned off
+		$DebugPreference = "SilentlyContinue"
+	}
+	
+	try
+	{	
+		# Set Security Protocol for RestAPI (must use TLS 1.2)
+		[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        # Delete any existing connexion cache
+        $Global:PlatformConnection = [Void]$null
+
+		if (-not [System.String]::IsNullOrEmpty($Client))
+        {
+            # Get Bearer Token from OAuth2 Client App
+			$BearerToken = Get-PlatformBearerToken -Url $Url -Client $Client -Secret $Secret -Scope $Scope
+
+            # Validate Bearer Token and obtain Session details
+			$Uri = ("https://{0}/Security/Whoami" -f $Url)
+			$ContentType = "application/json" 
+			$Header = @{ "X-CENTRIFY-NATIVE-CLIENT" = "1"; "Authorization" = ("Bearer {0}" -f $BearerToken) }
+			Write-Debug ("Connecting to Delinea Platform (https://{0}) using Bearer Token" -f $Url)
+			
+			# Debug informations
+			Write-Debug ("Uri= {0}" -f $Uri)
+			Write-Debug ("BearerToken={0}" -f $BearerToken)
+			
+			# Format Json query
+			$Json = @{} | ConvertTo-Json
+			
+			# Connect using Certificate
+			$WebResponse = Invoke-WebRequest -UseBasicParsing -Method Post -SessionVariable PASSession -Uri $Uri -Body $Json -ContentType $ContentType -Headers $Header
+            $WebResponseResult = $WebResponse.Content | ConvertFrom-Json
+            if ($WebResponseResult.Success)
+		    {
+				# Get Connection details
+				$Connection = $WebResponseResult.Result
+				
+				# Force URL into PodFqdn to retain URL when performing MachineCertificate authentication
+				$Connection | Add-Member -MemberType NoteProperty -Name CustomerId -Value $Connection.TenantId
+				$Connection | Add-Member -MemberType NoteProperty -Name PodFqdn -Value $Url
+				
+				# Add session to the Connection
+				$Connection | Add-Member -MemberType NoteProperty -Name Session -Value $PASSession
+
+				# Set Connection as global
+				$Global:PlatformConnection = $Connection
+
+                # setting the splat
+                $global:SessionInformation = @{ Headers = $PlatformConnection.Session.Headers }
+				
+				# Return information values to confirm connection success
+				return ($Connection | Select-Object -Property CustomerId, User, PodFqdn | Format-List)
+            }
+            else
+            {
+                Throw "Invalid Bearer Token."
+            }
+        }	
+        else
+		{
+			# Setup variable for interactive connection using MFA
+			$Uri = ("https://{0}/Security/StartAuthentication" -f $Url)
+			$ContentType = "application/json" 
+			$Header = @{ "X-CENTRIFY-NATIVE-CLIENT" = "1" }
+			Write-Host ("Connecting to Delinea Platform (https://{0}) as {1}`n" -f $Url, $User)
+			
+			# Debug informations
+			Write-Debug ("Uri= {0}" -f $Uri)
+			Write-Debug ("Login= {0}" -f $UserName)
+			
+			# Format Json query
+			$Auth = @{}
+			$Auth.TenantId = $Url.Split('.')[0]
+			$Auth.User = $User
+            $Auth.Version = "1.0"
+			$Json = $Auth | ConvertTo-Json
+			
+			# Initiate connection
+			$InitialResponse = Invoke-WebRequest -UseBasicParsing -Method Post -SessionVariable PASSession -Uri $Uri -Body $Json -ContentType $ContentType -Headers $Header
+
+    		# Getting Authentication challenges from initial Response
+            $InitialResponseResult = $InitialResponse.Content | ConvertFrom-Json
+		    if ($InitialResponseResult.Success)
+		    {
+			    Write-Debug ("InitialResponse=`n{0}" -f $InitialResponseResult)
+                # Go through all challenges
+                foreach ($Challenge in $InitialResponseResult.Result.Challenges)
+                {
+                    # Go through all available mechanisms
+                    if ($Challenge.Mechanisms.Count -gt 1)
+                    {
+                        Write-Host "`n[Available mechanisms]"
+                        # More than one mechanism available
+                        $MechanismIndex = 1
+                        foreach ($Mechanism in $Challenge.Mechanisms)
+                        {
+                            # Show Mechanism
+                            Write-Host ("{0} - {1}" -f $MechanismIndex++, $Mechanism.PromptSelectMech)
+                        }
+                        
+                        # Prompt for Mechanism selection
+                        $Selection = Read-Host -Prompt "Please select a mechanism [1]"
+                        # Default selection
+                        if ([System.String]::IsNullOrEmpty($Selection))
+                        {
+                            # Default selection is 1
+                            $Selection = 1
+                        }
+                        # Validate selection
+                        if ($Selection -gt $Challenge.Mechanisms.Count)
+                        {
+                            # Selection must be in range
+                            Throw "Invalid selection. Authentication challenge aborted." 
+                        }
+                    }
+                    elseif($Challenge.Mechanisms.Count -eq 1)
+                    {
+                        # Force selection to unique mechanism
+                        $Selection = 1
+                    }
+                    else
+                    {
+                        # Unknown error
+                        Throw "Invalid number of mechanisms received. Authentication challenge aborted."
+                    }
+
+                    # Select chosen Mechanism and prepare answer
+                    $ChosenMechanism = $Challenge.Mechanisms[$Selection - 1]
+
+			        # Format Json query
+			        $Auth = @{}
+			        $Auth.TenantId = $InitialResponseResult.Result.TenantId
+			        $Auth.SessionId = $InitialResponseResult.Result.SessionId
+                    $Auth.MechanismId = $ChosenMechanism.MechanismId
+                    
+                    # Decide for Prompt or Out-of-bounds Auth
+                    switch($ChosenMechanism.AnswerType)
+                    {
+                        "Text" # Prompt User for answer
+                        {
+                            $Auth.Action = "Answer"
+                            # Prompt for User answer using SecureString to mask typing
+                            $SecureString = Read-Host $ChosenMechanism.PromptMechChosen -AsSecureString
+                            $Auth.Answer = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString))
+                        }
+                        
+                        "StartTextOob" # Out-of-bounds Authentication (User need to take action other than through typed answer)
+                        {
+                            $Auth.Action = "StartOOB"
+                            # Notify User for further actions
+                            Write-Host $ChosenMechanism.PromptMechChosen
+                        }
+                    }
+	                $Json = $Auth | ConvertTo-Json
+                    
+                    # Send Challenge answer
+			        $Uri = ("https://{0}/Security/AdvanceAuthentication" -f $Url)
+			        $ContentType = "application/json" 
+			        $Header = @{ "X-CENTRIFY-NATIVE-CLIENT" = "1" }
+			
+			        # Send answer
+			        $WebResponse = Invoke-WebRequest -UseBasicParsing -Method Post -SessionVariable PASSession -Uri $Uri -Body $Json -ContentType $ContentType -Headers $Header
+            		
+                    # Get Response
+                    $WebResponseResult = $WebResponse.Content | ConvertFrom-Json
+                    if ($WebResponseResult.Success)
+		            {
+                        # Evaluate Summary response
+                        if($WebResponseResult.Result.Summary -eq "OobPending")
+                        {
+                            $Answer = Read-Host "Enter code or press <enter> to finish authentication"
+                            # Send Poll message to Delinea Identity Platform after pressing enter key
+			                $Uri = ("https://{0}/Security/AdvanceAuthentication" -f $Url)
+			                $ContentType = "application/json" 
+			                $Header = @{ "X-CENTRIFY-NATIVE-CLIENT" = "1" }
+			
+			                # Format Json query
+			                $Auth = @{}
+			                $Auth.TenantId = $Url.Split('.')[0]
+			                $Auth.SessionId = $InitialResponseResult.Result.SessionId
+                            $Auth.MechanismId = $ChosenMechanism.MechanismId
+                            
+                            # Either send entered code or poll service for answer
+                            if ([System.String]::IsNullOrEmpty($Answer))
+                            {
+                                $Auth.Action = "Poll"
+                            }
+                            else
+                            {
+                                $Auth.Action = "Answer"
+                                $Auth.Answer = $Answer
+                            }
+			                $Json = $Auth | ConvertTo-Json
+			
+                            # Send Poll message or Answer
+			                $WebResponse = Invoke-WebRequest -UseBasicParsing -Method Post -SessionVariable PASSession -Uri $Uri -Body $Json -ContentType $ContentType -Headers $Header
+                            $WebResponseResult = $WebResponse.Content | ConvertFrom-Json
+                            if ($WebResponseResult.Result.Summary -ne "LoginSuccess")
+                            {
+                                Throw "Failed to receive challenge answer or answer is incorrect. Authentication challenge aborted."
+                            }
+                        }
+
+                        # If summary return LoginSuccess at any step, we can proceed with session
+                        if ($WebResponseResult.Result.Summary -eq "LoginSuccess")
+		                {
+                            # Get Session Token from successfull login
+			                Write-Debug ("WebResponse=`n{0}" -f $WebResponseResult)
+			                # Validate that a valid .ASPXAUTH cookie has been returned for the PASConnection
+			                $CookieUri = ("https://{0}" -f $Url)
+			                $ASPXAuth = $PASSession.Cookies.GetCookies($CookieUri) | Where-Object { $_.Name -eq ".ASPXAUTH" }
+			
+			                if ([System.String]::IsNullOrEmpty($ASPXAuth))
+			                {
+				                # .ASPXAuth cookie value is empty
+				                Throw ("Failed to get a .ASPXAuth cookie for Url {0}. Verify Url and try again." -f $CookieUri)
+			                }
+			                else
+			                {
+				                # Get Connection details
+				                $Connection = $WebResponseResult.Result
+				
+				                # Add session to the Connection
+				                $Connection | Add-Member -MemberType NoteProperty -Name Session -Value $PASSession
+
+				                # Set Connection as global
+				                $Global:PlatformConnection = $Connection
+
+                                # setting the splat for variable connection 
+                                $global:SessionInformation = @{ WebSession = $PlatformConnection.Session }
+				
+				                # Return information values to confirm connection success
+				                return ($Connection | Select-Object -Property CustomerId, User, PodFqdn | Format-List)
+			                }# else
+                        }# if ($WebResponseResult.Result.Summary -eq "LoginSuccess")
+		            }# if ($WebResponseResult.Success)
+		            else
+		            {
+                        # Unsuccesful connection
+			            Throw $WebResponseResult.Message
+		            }
+                }# foreach ($Challenge in $InitialResponseResult.Result.Challenges)
+		    }# if ($InitialResponseResult.Success)
+		    else
+		    {
+			    # Unsuccesful connection
+			    Throw $InitialResponseResult.Message
+		    }
+		}# else
+	}# try
+	catch
+	{
+		Throw $_.Exception
+	}
+}# function global:Connect-DelineaPlatform
 #endregion
 ###########
 
@@ -419,71 +1057,6 @@ function global:Get-PlatformCollectionRowAce
 ###########
 
 ###########
-#region ### global:Get-PlatformSecret # Gets a PlatformSecret object from the tenant
-###########
-function global:Get-PlatformSecret
-{
-    [CmdletBinding(DefaultParameterSetName="All")]
-    param
-    (
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the secret to search.",ParameterSetName = "Name")]
-        [System.String]$Name,
-
-        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
-        [System.String]$Uuid
-    )
-
-    # base query
-    $query = "SELECT * FROM DataVault"
-
-    # if the All set was not used
-    if ($PSCmdlet.ParameterSetName -ne "All")
-    {
-        # arraylist for extra options
-        $extras = New-Object System.Collections.ArrayList
-
-        # appending the WHERE 
-        $query += " WHERE "
-
-        # setting up the extra conditionals
-        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("SecretName = '{0}'" -f $Name)) | Out-Null }
-        if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"         -f $Uuid)) | Out-Null }
-
-        # join them together with " AND " and append it to the query
-        $query += ($extras -join " AND ")
-    }# if ($PSCmdlet.ParameterSetName -ne "All")
-
-    Write-Verbose ("SQLQuery: [{0}]" -f $query)
-
-    # make the query
-    $sqlquery = Query-VaultRedRock -SqlQuery $query
-
-    # new ArrayList to hold multiple entries
-    $secrets = New-Object System.Collections.ArrayList
-
-    # if the query isn't null
-    if ($sqlquery -ne $null)
-    {
-        # for each secret in the query
-        foreach ($secret in $sqlquery)
-        {
-            # Counter for the secret objects
-            $p++; Write-Progress -Activity "Processing Secrets into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
-            
-            # creating the PlatformSecret object
-            $obj = [PlatformSecret]::new($secret)
-
-            $secrets.Add($obj) | Out-Null
-        }# foreach ($secret in $query)
-    }# if ($sqlquery -ne $null)
-
-    # returning the secrets
-    return $secrets
-}# lobal:Get-PlatformSecret
-#endregion
-###########
-
-###########
 #region ### global:Get-PlatformWorkflowApprover # Queries a user or role for their Workflow Approver format
 ###########
 function global:Get-PlatformWorkflowApprover
@@ -639,216 +1212,6 @@ function global:Get-PlatformSecretWorkflowApprovers
 ###########
 
 ###########
-#region ### global:Get-PlatformSet # Gets a Platform Set object
-###########
-function global:Get-PlatformSet
-{
-    [CmdletBinding(DefaultParameterSetName="All")]
-    param
-    (
-        [Parameter(Mandatory = $true, HelpMessage = "The type of Set to search.", ParameterSetName = "Type")]
-        [System.String]$Type,
-
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Set to search.", ParameterSetName = "Name")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
-        [System.String]$Name,
-
-        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Set to search.",ParameterSetName = "Uuid")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
-        [System.String]$Uuid
-    )
-
-    # setting the base query
-    $query = "Select * FROM Sets"
-
-    # arraylist for extra options
-    $extras = New-Object System.Collections.ArrayList
-
-    # if the All set was not used
-    if ($PSCmdlet.ParameterSetName -ne "All")
-    {
-        # appending the WHERE 
-        $query += " WHERE "
-
-        # setting up the extra conditionals
-        if ($PSBoundParameters.ContainsKey("Type")) { $extras.Add(("ObjectType = '{0}'" -f $Type)) | Out-Null }
-        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("Name = '{0}'"       -f $Name)) | Out-Null }
-        if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"         -f $Uuid)) | Out-Null }
-
-        # join them together with " AND " and append it to the query
-        $query += ($extras -join " AND ")
-    }# if ($PSCmdlet.ParameterSetName -ne "All")
-
-    Write-Verbose ("SQLQuery: [{0}]" -f $query)
-
-    # making the query
-    $sqlquery = Query-VaultRedRock -SQLQuery $query
-
-    # ArrayList to hold objects
-    $queries = New-Object System.Collections.ArrayList
-    
-    # if the query isn't null
-    if ($sqlquery -ne $null)
-    {
-        foreach ($q in $sqlquery)
-        {
-            # Counter for the secret objects
-            $p++; Write-Progress -Activity "Processing Sets into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
-            
-            Write-Verbose ("Working with [{0}] Set [{1}]" -f $q.Name, $q.ObjectType)
-            # create a new Platform Set object
-            $set = [PlatformSet]::new($q)
-
-            # if the Set is a Manual Set (not a Folder or Dynamic Set)
-            if ($set.SetType -eq "ManualBucket")
-            {
-                # get the Uuids of the members
-                $set.GetMembers()
-            }
-
-            # determin the potential owner of the Set
-            $set.determineOwner()
-
-            $queries.Add($set) | Out-Null
-        }# foreach ($q in $query)
-    }# if ($query -ne $null)
-    else
-    {
-        return $false
-    }
-    
-    #return $set
-    return $queries
-}# function global:Get-PlatformSet
-#endregion
-###########
-
-###########
-#region ### global:Verify-PlatformCredentials # Verifies the password is health for the specified account
-###########
-function global:Verify-PlatformCredentials
-{
-    param
-    (
-        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to check.",ParameterSetName = "Uuid")]
-        [System.String]$Uuid
-    )
-
-    $response = Invoke-PlatformAPI -APICall ServerManage/CheckAccountHealth -Body (@{ ID = $Uuid } | ConvertTo-Json)
-
-    if ($response -eq "OK")
-    {
-        [System.Boolean]$responseAnswer = $true
-    }
-    else
-    {
-        [System.Boolean]$responseAnswer = $false
-    }
-    
-    return $responseAnswer
-}# function global:Verify-PlatformCredentials
-#endregion
-###########
-
-###########
-#region ### global:Get-PlatformAccount # Gets a Platform Account object
-###########
-function global:Get-PlatformAccount
-{
-    [CmdletBinding(DefaultParameterSetName="All")]
-    param
-    (
-        [Parameter(Mandatory = $true, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
-        [ValidateSet("Local","Domain","Database")]
-        [System.String]$Type,
-
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Source")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Type")]
-        [System.String]$SourceName,
-
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Account to search.", ParameterSetName = "Name")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
-        [System.String]$UserName,
-
-        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to search.",ParameterSetName = "Uuid")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
-        [System.String]$Uuid
-    )
-
-    # setting the base query
-    $query = "Select * FROM VaultAccount"
-
-    # arraylist for extra options
-    $extras = New-Object System.Collections.ArrayList
-
-    # if the All set was not used
-    if ($PSCmdlet.ParameterSetName -ne "All")
-    {
-        # appending the WHERE 
-        $query += " WHERE "
-
-        # setting up the extra conditionals
-        if ($PSBoundParameters.ContainsKey("Type"))
-        {
-            Switch ($Type)
-            {
-                "Domain"   { $extras.Add("DomainID NOT NULL") | Out-Null ; break }
-                "Database" { $extras.Add("DatabaseID NOT NULL") | Out-Null ; break }
-                "Local"    { $extras.Add("Host NOT NULL") | Out-Null ; break }
-            }
-        }# if ($PSBoundParameters.ContainsKey("Type"))
-        
-        if ($PSBoundParameters.ContainsKey("SourceName")) { $extras.Add(("Name = '{0}'" -f $SourceName)) | Out-Null }
-        if ($PSBoundParameters.ContainsKey("UserName"))   { $extras.Add(("User = '{0}'" -f $UserName))   | Out-Null }
-        if ($PSBoundParameters.ContainsKey("Uuid"))       { $extras.Add(("ID = '{0}'"   -f $Uuid))       | Out-Null }
-
-        # join them together with " AND " and append it to the query
-        $query += ($extras -join " AND ")
-    }# if ($PSCmdlet.ParameterSetName -ne "All")
-
-    Write-Verbose ("SQLQuery: [{0}]" -f $query)
-
-    # making the query
-    $sqlquery = Query-VaultRedRock -SQLQuery $query
-
-    # ArrayList to hold objects
-    $queries = New-Object System.Collections.ArrayList
-    
-    # if the query isn't null
-    if ($sqlquery -ne $null)
-    {
-        foreach ($q in $sqlquery)
-        {
-            # Counter for the secret objects
-            $p++; Write-Progress -Activity "Processing Accounts into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
-            
-            Write-Verbose ("Working with Account [{0}\{1}]" -f $q.Name, $q.User)
-
-            # minor placeholder to hold account type in case of all call
-            [System.String]$accounttype = $null
-
-            if ($q.DomainID -ne $null)   { $accounttype = "Domain"   }
-            if ($q.DatabaseID -ne $null) { $accounttype = "Database" }
-            if ($q.Host -ne $null)       { $accounttype = "Local"    }
-
-            # create a new Platform Account object
-            $account = [PlatformAccount]::new($q, $accounttype)
-
-            $queries.Add($account) | Out-Null
-        }# foreach ($q in $query)
-    }# if ($query -ne $null)
-    else
-    {
-        return $false
-    }
-    
-    #return $queries
-    return $queries
-}# function global:Get-PlatformAccount
-#endregion
-###########
-
-###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -931,8 +1294,12 @@ class PlatformSecret
         $this.Description = $secretinfo.Description
         $this.ID = $secretinfo.ID
         $this.FolderId = $secretinfo.FolderId
-        $this.whenCreated = $secretinfo.whenCreated
         $this.WorkflowEnabled = $secretinfo.WorkflowEnabled
+
+        if ($secretinfo.whenCreated -ne $null)
+        {
+            $this.whenCreated = $secretinfo.whenCreated
+        }
         
         # if the secret has been updated
         if ($secretinfo.WhenContentsReplaced -ne $null)
@@ -1233,38 +1600,6 @@ class PlatformRowAceException : System.Exception
 
     PlatformRowAceException() {}
 }
-#######################################
-#endregion ############################
-#######################################
-
-#######################################
-#region ### PREPARE ###################
-#######################################
-
-# checking for required modules
-Check-Module Centrify.Platform.PowerShell
-
-# check if there is an existing $PlatformConnection from the Platform PowerShell module
-if ($PlatformConnection -eq $null)
-{
-    Write-Host ("There is no existing `$PlatformConnection. Please use Connect-CentrifyPlatform to connect to your Centrify tenant. Exiting.")
-    Exit 2 # EXITCODE 2 : No Platform Connection
-}
-else
-{
-    ## setting Splat information based on how the user is logged in
-    # if the $PlatformConnection has an Authorization Key in the header, then it is an OAUTH2 confidential client user
-    if ($PlatformConnection.Session.Headers.Keys.Contains("Authorization"))
-    {
-        $global:SessionInformation = @{ Headers = $PlatformConnection.Session.Headers }
-    }
-    else # otherwise it is an interactive user
-    {
-        $global:SessionInformation = @{ WebSession = $PlatformConnection.Session }
-    }
-
-}
-
 #######################################
 #endregion ############################
 #######################################
