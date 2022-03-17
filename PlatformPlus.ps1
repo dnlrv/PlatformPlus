@@ -522,11 +522,17 @@ function global:Connect-DelineaPlatform
 
 		if (-not [System.String]::IsNullOrEmpty($Client))
         {
+            # Check if URL provided has "https://" in front, if so, remove it.
+            if ($Url.ToLower().Substring(0,8) -eq "https://")
+            {
+                $Url = $Url.Substring(8)
+            }
+            
             # Get Bearer Token from OAuth2 Client App
 			$BearerToken = Get-PlatformBearerToken -Url $Url -Client $Client -Secret $Secret -Scope $Scope
 
             # Validate Bearer Token and obtain Session details
-			$Uri = ("https://{0}/Security/Whoami" -f $Url)
+            $Uri = ("https://{0}/Security/Whoami" -f $Url)
 			$ContentType = "application/json" 
 			$Header = @{ "X-CENTRIFY-NATIVE-CLIENT" = "1"; "Authorization" = ("Bearer {0}" -f $BearerToken) }
 			Write-Debug ("Connecting to Delinea Platform (https://{0}) using Bearer Token" -f $Url)
@@ -569,7 +575,12 @@ function global:Connect-DelineaPlatform
         }	
         else
 		{
-			# Setup variable for interactive connection using MFA
+			# Check if URL provided has "https://" in front, if so, remove it.
+            if ($Url.ToLower().Substring(0,8) -eq "https://")
+            {
+                $Url = $Url.Substring(8)
+            }
+            # Setup variable for interactive connection using MFA
 			$Uri = ("https://{0}/Security/StartAuthentication" -f $Url)
 			$ContentType = "application/json" 
 			$Header = @{ "X-CENTRIFY-NATIVE-CLIENT" = "1" }
