@@ -288,7 +288,7 @@ function global:Get-PlatformAccount
     param
     (
         [Parameter(Mandatory = $true, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
-        [ValidateSet("Local","Domain","Database")]
+        [ValidateSet("Local","Domain","Database","Cloud")]
         [System.String]$Type,
 
         [Parameter(Mandatory = $true, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Source")]
@@ -324,9 +324,10 @@ function global:Get-PlatformAccount
         {
             Switch ($Type)
             {
-                "Domain"   { $extras.Add("DomainID NOT NULL") | Out-Null ; break }
-                "Database" { $extras.Add("DatabaseID NOT NULL") | Out-Null ; break }
-                "Local"    { $extras.Add("Host NOT NULL") | Out-Null ; break }
+                "Cloud"    { $extras.Add("CloudProviderID IS NOT NULL") | Out-Null ; break }
+                "Domain"   { $extras.Add("DomainID IS NOT NULL") | Out-Null ; break }
+                "Database" { $extras.Add("DatabaseID IS NOT NULL") | Out-Null ; break }
+                "Local"    { $extras.Add("Host IS NOT NULL") | Out-Null ; break }
             }
         }# if ($PSBoundParameters.ContainsKey("Type"))
         
@@ -359,9 +360,10 @@ function global:Get-PlatformAccount
             # minor placeholder to hold account type in case of all call
             [System.String]$accounttype = $null
 
-            if ($q.DomainID -ne $null)   { $accounttype = "Domain"   }
-            if ($q.DatabaseID -ne $null) { $accounttype = "Database" }
-            if ($q.Host -ne $null)       { $accounttype = "Local"    }
+            if ($q.CloudProviderID -ne $null) { $accounttype = "Cloud"    }
+            if ($q.DomainID -ne $null)        { $accounttype = "Domain"   }
+            if ($q.DatabaseID -ne $null)      { $accounttype = "Database" }
+            if ($q.Host -ne $null)            { $accounttype = "Local"    }
 
             # create a new Platform Account object
             $account = [PlatformAccount]::new($q, $accounttype)
@@ -862,7 +864,8 @@ function global:Convert-PermissionToString
                                            UnlockAccountServer = 1048576; OfflineRescueServer = 2097152;  AddPrivilegeElevationServer = 4194304}; break }
         "Domain"           { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; DeleteAccount = 64; LoginAccount = 128; CheckoutAccount = 65536; 
                                            UpdatePasswordAccount = 131072; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
-
+        "Cloud"            { $AceHash = @{ GrantCloudAccount = 1; ViewCloudAccount = 4; EditVaultAccount = 8; DeleteCloudAccount = 64; UseAccessKey = 128;
+                                           RetrieveCloudAccount = 65536} ; break }
         "Local|Account|VaultAccount" 
                            { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; DeleteAccount = 64; LoginAccount = 128;  CheckoutAccount = 65536; 
                                            UpdatePasswordAccount = 131072; WorkspaceLoginAccount = 262147; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
@@ -920,7 +923,7 @@ function global:Get-PlatformRowAce
         "Secret"    { $table = "DataVault"    ; break }
         "Set|Phantom|ManualBucket|SqlDynamic"
                     { $table = "Collections"  ; break }
-        "Domain|Database|Local"
+        "Domain|Database|Local|Cloud"
                     { $table = "VaultAccount" ; break }
         default     { $table = $Type          ; break }
     }
@@ -1559,6 +1562,7 @@ class PlatformAccount
             "Database" { $this.SourceID = $account.DatabaseID; break }
             "Domain"   { $this.SourceID = $account.DomainID; break }
             "Local"    { $this.SourceID = $account.Host; break }
+            "Cloud"    { $this.SourceID = $account.CloudProviderID; break }
         }
 
         $this.Username = $account.User
