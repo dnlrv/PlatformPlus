@@ -1589,6 +1589,15 @@ class PlatformAccount
     getPassword()
     {
     }
+
+    verifyPassword()
+    {
+        Write-Debug ("Starting Password Health Check for {0}" -f $this.Username)
+        $result = Invoke-PlatformAPI -APICall ServerManage/CheckAccountHealth -Body (@{"ID"=$this.ID} | ConvertTo-Json)
+        $this.Healthy = $result
+        Write-Debug ("Password Health: {0}" -f $result)
+    }
+
 }# class PlatformAccount
 
 # class to hold a custom PlatformError
