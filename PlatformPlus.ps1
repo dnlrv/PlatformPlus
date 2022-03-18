@@ -413,6 +413,93 @@ function global:Verify-PlatformCredentials
 ###########
 
 ###########
+#region ### global:Get-PlatformVault # Gets a Platform Vault object
+###########
+function global:Get-PlatformVault
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The type of Vault to search.", ParameterSetName = "Type")]
+        [ValidateSet("SecretServer")]
+        [System.String]$Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Vault to search.", ParameterSetName = "Name")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Vault to search.", ParameterSetName = "Type")]
+        [System.String]$VaultName,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Vault to search.",ParameterSetName = "Uuid")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Vault to search.", ParameterSetName = "Type")]
+        [System.String]$Uuid
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    # setting the base query
+    $query = "SELECT ID, Type as VaultType, Name as VaultName, Url, UserName, SyncInterval, LastSync FROM Vault"
+
+    # arraylist for extra options
+    $extras = New-Object System.Collections.ArrayList
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
+    {
+        # appending the WHERE 
+        $query += " WHERE "
+
+        # setting up the extra conditionals
+        if ($PSBoundParameters.ContainsKey("Type"))
+        {
+            Switch ($Type) # Only one type for now, but more may show up in the future
+            {
+                "SecretServer" { $extras.Add(("Type = '{0}'" -f $Type)) | Out-Null ; break }
+            }
+        }# if ($PSBoundParameters.ContainsKey("Type"))
+        
+        if ($PSBoundParameters.ContainsKey("VaultName"))  { $extras.Add(("Name = '{0}'" -f $VaultName)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid"))       { $extras.Add(("ID = '{0}'"   -f $Uuid))       | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # making the query
+    $sqlquery = Query-VaultRedRock -SQLQuery $query
+
+    # ArrayList to hold objects
+    $queries = New-Object System.Collections.ArrayList
+
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        foreach ($q in $sqlquery)
+        {
+            # Counter for the secret objects
+            $pv++; Write-Progress -Activity "Processing Vaults into Objects" -Status ("{0} out of {1} Complete" -f $pv,$sqlquery.Count) -PercentComplete ($pv/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            Write-Verbose ("Working with Vault [{0}]" -f $q.VaultName )
+
+            # create a new Platform Vault object
+            $vault = [PlatformVault]::new($q)
+
+            $queries.Add($vault) | Out-Null
+        }# foreach ($q in $query)
+    }# if ($query -ne $null)
+    else
+    {
+        return $false
+    }
+    
+    #return $queries
+    return $queries
+}# function global:Get-PlatformVault
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -1533,6 +1620,29 @@ class SetMember
     }
 }# class SetMember
 
+# class for configured Vaults
+class PlatformVault
+{
+    [System.String]$VaultType
+    [System.String]$VaultName
+    [System.String]$ID
+    [System.String]$Url
+    [System.String]$Username
+    [System.Int32]$SyncInterval
+    [System.DateTime]$LastSync
+
+    PlatformVault($vault)
+    {
+        $this.VaultType = $vault.VaultType
+        $this.VaultName = $vault.VaultName
+        $this.ID = $vault.ID
+        $this.LastSync = $vault.LastSync
+        $this.SyncInterval = $vault.SyncInterval
+        $this.Username = $vault.Username
+        $this.Url = $vault.Url
+    }
+}
+
 # class to hold Accounts
 class PlatformAccount
 {
@@ -1549,6 +1659,7 @@ class PlatformAccount
     [PlatformRowAce[]]$PermissionRowAces           # The RowAces (Permissions) of this Account
     [System.Boolean]$WorkflowEnabled
     [PlatformWorkflowApprover[]]$WorkflowApprovers # the workflow approvers for this Account
+    [PlatformVault]$Vault
 
     PlatformAccount($account, [System.String]$t)
     {
@@ -1570,8 +1681,14 @@ class PlatformAccount
         $this.isManaged = $account.IsManaged
         $this.Healthy = $account.Healthy
         $this.LastHealthCheck = $account.LastHealthCheck
-        $this.Description = $this.Description
+        $this.Description = $account.Description
 
+        # Populate the Vault property if Account is imported from a Vault
+        if ($account.VaultId -ne $null)
+        {
+            $this.Vault = (Get-PlatformVault -Uuid $account.VaultId)
+        } # if ($null -ne $account.VaultId)
+        
         # getting the RowAces for this Set
         $this.PermissionRowAces = Get-PlatformRowAce -Type $this.AccountType -Uuid $this.ID
 
