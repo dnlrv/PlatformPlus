@@ -1660,6 +1660,7 @@ class PlatformAccount
     [System.Boolean]$WorkflowEnabled
     [PlatformWorkflowApprover[]]$WorkflowApprovers # the workflow approvers for this Account
     [PlatformVault]$Vault
+    [System.String]$SSName
 
     PlatformAccount($account, [System.String]$t)
     {
@@ -1682,6 +1683,7 @@ class PlatformAccount
         $this.Healthy = $account.Healthy
         $this.LastHealthCheck = $account.LastHealthCheck
         $this.Description = $account.Description
+        $this.SSName = ("{0}\{1}" -f $this.SourceName, $this.Username)
 
         # Populate the Vault property if Account is imported from a Vault
         if ($account.VaultId -ne $null)
