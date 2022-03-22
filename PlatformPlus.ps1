@@ -477,9 +477,6 @@ function global:Get-PlatformVault
     {
         foreach ($q in $sqlquery)
         {
-            # Counter for the secret objects (Tends to mess up the output of the Vault discovery progress bar.)
-            #$pv++; Write-Progress -Activity "Processing Vaults into Objects" -Status ("{0} out of {1} Complete" -f $pv,$sqlquery.Count) -PercentComplete ($pv/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
-            
             Write-Verbose ("Working with Vault [{0}]" -f $q.VaultName )
 
             # create a new Platform Vault object
