@@ -1009,6 +1009,7 @@ function global:Get-PlatformRowAce
                     { $table = "Collections"  ; break }
         "Domain|Database|Local|Cloud"
                     { $table = "VaultAccount" ; break }
+        "Server"    { $table = "Server"       ; break }
         default     { $table = $Type          ; break }
     }
 
@@ -1716,6 +1717,64 @@ class PlatformAccount
 
 }# class PlatformAccount
 
+# class to hold Systems
+class PlatformSystem 
+{
+    [System.String]$Name
+    [System.String]$Description
+    [System.String]$FQDN
+    [System.String]$ComputerClass
+    [System.String]$ID
+    [System.String]$ProxyUser
+    [System.Boolean]$ProxyUserIsManaged
+    [System.Int32]$ActiveCheckouts
+    [System.String]$DomainId
+    [System.String]$ZoneStatus
+    [System.Boolean]$UseDomainWorkflowApprovers
+    [System.Boolean]$ZoneRoleWorkflowEnabled
+    [System.String]$AgentVersion
+    [System.String]$OperatingSystem
+    [System.Boolean]$Reachable
+    [System.String]$HealthStatus
+    [System.String]$LastState
+    [System.String]$HealthStatusError
+    [System.String]$ReachableError
+    [System.DateTime]$LastHealthCheck
+    [PlatformRowAce[]]$PermissionRowAces
+    [PlatformAccount[]]$PlatformAccounts
+
+    PlatformSystem($system)
+    {
+        $this.Name = $system.Name
+        $this.Description = $system.Description
+        $this.FQDN = $system.FQDN
+        $this.ComputerClass = $system.ComputerClass
+        $this.ID = $system.ID
+        $this.ProxyUser = $system.ProxyUser
+        $this.ProxyUserIsManaged = $system.ProxyUserIsManaged
+        $this.ActiveCheckouts = $system.ActiveCheckouts
+        $this.DomainId = $system.DomainId
+        $this.ZoneStatus = $system.ZoneStatus
+        $this.UseDomainWorkflowApprovers = $system.UseDomainWorkflowApprovers
+        $this.ZoneRoleWorkflowEnabled = $system.ZoneRoleWorkflowEnabled
+        $this.AgentVersion = $system.AgentVersion
+        $this.OperatingSystem = $system.OperatingSystem
+        $this.Reachable = $system.Reachable
+        $this.LastState = $system.LastState
+        $this.HealthStatusError = $system.HealthStatusError
+        $this.ReachableError = $system.ReachableError
+        $this.LastHealthCheck = $system.LastHealthCheck
+        
+        # getting the RowAces for this System
+        $this.PermissionRowAces = Get-PlatformRowAce -Type "SERVER" -Uuid $this.ID
+    }# PlatformSystem($system)
+
+    getAccounts()
+    {
+        $this.PlatformAccounts = Get-PlatformAccount -Type Local -SourceName $this.Name
+    }
+}# class PlatformSystem
+
 # class to hold a custom PlatformError
 class PlatformAPIException : System.Exception
 {
@@ -1727,7 +1786,7 @@ class PlatformAPIException : System.Exception
     PlatformAPIException([System.String]$message) : base ($message) {}
 
     PlatformAPIException() {}
-}
+}# class PlatformAPIException : System.Exception
 
 # class to hold a custom RowAce error
 class PlatformRowAceException : System.Exception
@@ -1739,7 +1798,7 @@ class PlatformRowAceException : System.Exception
     PlatformRowAceException([System.String]$message) : base ($message) {}
 
     PlatformRowAceException() {}
-}
+}# class PlatformRowAceException : System.Exception
 #######################################
 #endregion ############################
 #######################################
