@@ -497,6 +497,82 @@ function global:Get-PlatformVault
 ###########
 
 ###########
+#region ### global:Get-PlatformSystem # Gets a Platform System object
+###########
+function global:Get-PlatformSystem
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The Hostname of the System to search.", ParameterSetName = "Name")]
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The FQDN of the System to search.", ParameterSetName = "FQDN")]
+        [System.String]$FQDN,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the System to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    # setting the base query
+    $query = "Select * FROM Server"
+
+    # arraylist for extra options
+    $extras = New-Object System.Collections.ArrayList
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
+    {
+        # appending the WHERE 
+        $query += " WHERE "
+        
+        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("Name = '{0}'" -f $Name)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("FQDN")) { $extras.Add(("FQDN = '{0}'" -f $FQDN)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"   -f $Uuid)) | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # making the query
+    $sqlquery = Query-VaultRedRock -SQLQuery $query
+
+    # ArrayList to hold objects
+    $queries = New-Object System.Collections.ArrayList
+
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        foreach ($q in $sqlquery)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Systems into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            Write-Verbose ("Working with System [{0}]" -f $q.Name)
+
+            # create a new Platform System object
+            $system = [PlatformSystem]::new($q)
+
+            $queries.Add($system) | Out-Null
+        }# foreach ($q in $query)
+    }# if ($sqlquery -ne $null)
+    else
+    {
+        return $false
+    }
+    
+    #return $queries
+    return $queries
+}# function global:Get-PlatformSystem
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -1771,7 +1847,10 @@ class PlatformSystem
 
     getAccounts()
     {
-        $this.PlatformAccounts = Get-PlatformAccount -Type Local -SourceName $this.Name
+        if ($a = Get-PlatformAccount -Type Local -SourceName $this.Name)
+        {
+            $this.PlatformAccounts = $a
+        }
     }
 }# class PlatformSystem
 
