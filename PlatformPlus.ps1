@@ -1722,6 +1722,7 @@ class PlatformAccount
 {
     [System.String]$AccountType
     [System.String]$SourceName
+    [System.String]$SourceType
     [System.String]$SourceID
     [System.String]$Username
     [System.String]$ID
@@ -1735,6 +1736,8 @@ class PlatformAccount
     [PlatformWorkflowApprover[]]$WorkflowApprovers # the workflow approvers for this Account
     [PlatformVault]$Vault
     [System.String]$SSName
+    [System.DateTime]$LastCheckOut
+    [System.String]$CheckOutID
 
     PlatformAccount($account, [System.String]$t)
     {
@@ -1745,10 +1748,10 @@ class PlatformAccount
         # the tenant holds the source object's ID in different columns
         Switch ($this.AccountType)
         {
-            "Database" { $this.SourceID = $account.DatabaseID; break }
-            "Domain"   { $this.SourceID = $account.DomainID; break }
-            "Local"    { $this.SourceID = $account.Host; break }
-            "Cloud"    { $this.SourceID = $account.CloudProviderID; break }
+            "Database" { $this.SourceID = $account.DatabaseID; $this.SourceType = "DatabaseId"; break }
+            "Domain"   { $this.SourceID = $account.DomainID; $this.SourceType = "DomainId"; break }
+            "Local"    { $this.SourceID = $account.Host; $this.SourceType = "Host"; break }
+            "Cloud"    { $this.SourceID = $account.CloudProviderID; $this.SourceType = "CloudProviderId"; break }
         }
 
         $this.Username = $account.User
@@ -1779,18 +1782,75 @@ class PlatformAccount
 
     }# PlatformAccount($account)
 
-    getPassword()
+    [System.Boolean] CheckOutPassword()
     {
-    }
+        # if checkout is successful
+        if ($checkout = Invoke-PlatformAPI -APICall ServerManage/CheckoutPassword -Body (@{ID = $this.ID} | ConvertTo-Json))
+        {   
+            # set these checkout fields
+            $this.Password = $checkout.Password
+            $this.CheckOutID = $checkout.COID
+            $this.LastCheckOut = (Get-Date)
+        }# if ($checkout = Invoke-PlatformAPI -APICall ServerManage/CheckoutPassword -Body (@{ID = $this.ID} | ConvertTo-Json))
+        else
+        {
+            return $false
+        }
+        return $true
+    }# [System.Boolean] CheckOutPassword()
 
-    verifyPassword()
+    [System.Boolean] CheckInPassword()
+    {
+        # if CheckOutID isn't null
+        if ($this.CheckOutID -ne $null)
+        {
+            # if checkin is successful
+            if ($checkin = Invoke-PlatformAPI -APICall ServerManage/CheckinPassword -Body (@{ID = $this.CheckOutID} | ConvertTo-Json))
+            {
+                $this.Password   = $null
+                $this.CheckOutID = $null
+            }
+            else
+            {
+                return $false
+            }
+        }# if ($this.CheckOutID -ne $null)
+        else
+        {
+            return $false
+        }
+        return $true 
+    }# [System.Boolean] CheckInPassword()
+
+    [System.Boolean] UnmanageAccount()
+    {
+        # if the account was successfully unmanaged
+        if ($manageaccount = Invoke-PlatformAPI ServerManage/UpdateAccount -Body (@{ID=$this.ID;User=$this.Username;$this.SourceType=$this.SourceID;IsManaged=$false}|ConvertTo-Json))
+        {
+            $this.isManaged = $false
+            return $true
+        }
+        return $false
+    }# [System.Boolean] UnmanageAccount()
+
+    [System.Boolean] ManageAccount()
+    {
+        # if the account was successfully managed
+        if ($manageaccount = Invoke-PlatformAPI ServerManage/UpdateAccount -Body (@{ID=$this.ID;User=$this.Username;$this.SourceType=$this.SourceID;IsManaged=$true}|ConvertTo-Json))
+        {
+            $this.isManaged = $true
+            return $true
+        }
+        return $false
+    }# [System.Boolean] ManageAccount()
+
+    VerifyPassword()
     {
         Write-Debug ("Starting Password Health Check for {0}" -f $this.Username)
         $result = Invoke-PlatformAPI -APICall ServerManage/CheckAccountHealth -Body (@{"ID"=$this.ID} | ConvertTo-Json)
         $this.Healthy = $result
         Write-Debug ("Password Health: {0}" -f $result)
-    }
-
+    }# VerifyPassword()
 }# class PlatformAccount
 
 # class to hold Systems
