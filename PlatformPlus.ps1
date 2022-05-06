@@ -1844,12 +1844,22 @@ class PlatformAccount
         return $false
     }# [System.Boolean] ManageAccount()
 
-    VerifyPassword()
+    [System.Boolean] VerifyPassword()
     {
         Write-Debug ("Starting Password Health Check for {0}" -f $this.Username)
         $result = Invoke-PlatformAPI -APICall ServerManage/CheckAccountHealth -Body (@{"ID"=$this.ID} | ConvertTo-Json)
         $this.Healthy = $result
         Write-Debug ("Password Health: {0}" -f $result)
+
+        # if the VerifyCredentials comes back okay, return true
+        if ($result -eq "OK")
+        {
+            return $true
+        }
+        else
+        {
+            return $false
+        }
     }# VerifyPassword()
 }# class PlatformAccount
 
