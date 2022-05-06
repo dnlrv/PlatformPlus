@@ -8,6 +8,14 @@ To install the script via the command line, run the following:
 (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dnlrv/PlatformPlus/main/PlatformPlus.ps1').Content | Out-File .\PlatformPlus.ps1
 ```
 
+## Running the script
+
+If scripts are not allowed to be run in your environment, an alternative method is the run the following once the script is downloaded:
+
+```
+([ScriptBlock]::Create((Get-Content .\PlatformPlus.ps1 -Raw))).Invoke()
+```
+
 ## Requirements
 
 This script has only one requirement:
