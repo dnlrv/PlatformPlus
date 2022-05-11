@@ -2058,7 +2058,3 @@ class PlatformRowAceException : System.Exception
 #######################################
 #endregion ############################
 #######################################
-
-
-$q = Query-VaultRedRock -SQLQuery "SELECT * FROM Server WHERE Name = 'CFYADMIN.za.sbicdirectory.com'"
-$a = [PlatformSystem]::new($q)
