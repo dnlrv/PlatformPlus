@@ -1387,6 +1387,60 @@ function global:Get-PlatformSecretWorkflowApprovers
 ###########
 
 ###########
+#region ### global:Get-PlatformZoneRoleWorkflowRoles # NOT USED UNTIL ZoneRoleWorkflow/GetRoles is FIXED
+###########
+function global:Get-PlatformZoneRoleWorkflowRoles
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the system to search.",ParameterSetName = "Uuid")]
+        [System.String]$Uuid
+    )
+
+    
+    # getting the zone roles by API call
+    $zoneroles = Invoke-PlatformAPI -APICall ZoneRoleWorkflow/GetRoles -Body (@{ ResourceId = $uuid } | ConvertTo-Json)
+
+    # preparing the zone roles
+    $ZoneRoleWorkflowRoles = Prepare-ZoneRoles -Roles ($zoneroles.Roles)
+
+    return $ZoneRoleWorkflowRoles
+}# function global:Get-PlatformZoneRoleWorkflowRoles
+#endregion
+###########
+
+###########
+#region ### global:Prepare-ZoneRoles # NOT USED UNTIL ZoneRoleWorkflow/GetRoles is FIXED
+###########
+function global:Prepare-ZoneRoles
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The JSON roles to prepare.")]
+        $Roles
+    )
+
+     # setting a new ArrayList object
+     $ZoneRoles = New-Object System.Collections.ArrayList
+
+     # for each zone role
+     foreach ($role in $Roles)
+     {        
+        # create our new PlatformZoneRoleWorkflowRole object
+        $obj = [PlatformZoneRoleWorkflowRole]::new($role)
+ 
+         # adding it to our ArrayList
+         $ZoneRoles.Add($obj) | Out-Null
+     }# foreach ($role in $Roles)
+ 
+     # returning the ArrayList
+     return $ZoneRoles
+}# function global:Prepare-ZoneRoles
+#endregion
+###########
+
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -1578,6 +1632,7 @@ class PlatformWorkflowApprover
     [System.Boolean]$Enabled
     [System.String]$Principal
     [System.String]$Guid
+    [System.String]$BackupApprover
     [System.Boolean]$OptionsSelector # extra fields for default sysadmin role
     [System.String]$RoleType
     [System.String]$_ID
@@ -1878,6 +1933,8 @@ class PlatformSystem
     [System.String]$ZoneStatus
     [System.Boolean]$UseDomainWorkflowApprovers
     [System.Boolean]$ZoneRoleWorkflowEnabled
+    [PlatformZoneRoleWorkflowRole[]]$ZoneRoleWorkflowRoles
+    [PlatformWorkflowApprover[]]$ZoneRoleWorkflowApprovers
     [System.String]$AgentVersion
     [System.String]$OperatingSystem
     [System.Boolean]$Reachable
@@ -1913,8 +1970,37 @@ class PlatformSystem
         
         # getting the RowAces for this System
         $this.PermissionRowAces = Get-PlatformRowAce -Type "SERVER" -Uuid $this.ID
-    }# PlatformSystem($system)
 
+        # getting the Zone Roles if enabled
+        if ($this.ZoneRoleWorkflowEnabled)
+        {
+            # broken until the endpoint is fixed
+            #$this.ZoneRoleWorkflowRoles = Get-PlatformZoneRoleWorkflowRoles -Uuid $this.ID
+
+            # temporary until endpoint is fixed
+            if ($system.ZoneRoleWorkflowRoles -ne $null)
+            {
+                $collection = New-Object System.Collections.ArrayList
+
+                foreach ($zonerole in ($system.ZoneRoleWorkflowRoles | ConvertFrom-Json))
+                {
+                    $obj = [PlatformZoneRoleWorkflowRole]::new($zonerole)
+                    $collection.Add($obj) | Out-Null
+                }
+
+                $this.ZoneRoleWorkflowRoles = $collection
+            }# if ($system.ZoneRoleWorkflowRoles -ne $null)
+
+            # if approvers exist
+            if ($system.ZoneRoleWorkflowApproversList -ne $null)
+            {
+                $approvers = Invoke-PlatformAPI -APICall ZoneRoleWorkflow/GetApprovers -Body (@{ResourceId = $this.ID;ScopeType="Computer"} | ConvertTo-Json)
+
+                $this.ZoneRoleWorkflowApprovers = Prepare-WorkflowApprovers -Approvers $approvers.WorkflowApprovers
+            }
+        }# if ($this.ZoneRoleWorkflowEnabled)
+    }# PlatformSystem($system)
+    
     getAccounts()
     {
         if ($a = Get-PlatformAccount -Type Local -SourceName $this.Name)
@@ -1923,6 +2009,27 @@ class PlatformSystem
         }
     }
 }# class PlatformSystem
+
+# class to hold a PlatformZoneRoleWorkflow Role
+class PlatformZoneRoleWorkflowRole
+{
+    [System.String]$Name
+    [System.Boolean]$Unix
+    [System.String]$ZoneDN
+    [System.String]$Description
+    [System.String]$ZoneCanonicalName
+    [System.String]$ParentZoneDN
+
+    PlatformZoneRoleWorkflowRole ($zoneworkflowrole)
+    {
+        $this.Name = $zoneworkflowrole.Name
+        $this.Unix = $zoneworkflowrole.Unix
+        $this.ZoneDN = $zoneworkflowrole.ZoneDn
+        $this.Description = $zoneworkflowrole.Description
+        $this.ZoneCanonicalName = $zoneworkflowrole.ZoneCanonicalName
+        $this.ParentZoneDN = $zoneworkflowrole.ParentZoneDn
+    }# PlatformZoneRoleWorkflowRole ($zoneworkflowrole)
+}# class PlatformZoneRoleWorkflowRole
 
 # class to hold a custom PlatformError
 class PlatformAPIException : System.Exception
@@ -1951,3 +2058,7 @@ class PlatformRowAceException : System.Exception
 #######################################
 #endregion ############################
 #######################################
+
+
+$q = Query-VaultRedRock -SQLQuery "SELECT * FROM Server WHERE Name = 'CFYADMIN.za.sbicdirectory.com'"
+$a = [PlatformSystem]::new($q)
