@@ -16,6 +16,11 @@ If scripts are not allowed to be run in your environment, an alternative method 
 ([ScriptBlock]::Create((Get-Content .\PlatformPlus.ps1 -Raw))).Invoke()
 ```
 
+Alternatively, for a completely scriptless run, where the script's contents is retrieved from the internet, and immediately executed as a ScriptBlock object (basically combining the previous cmdlets):
+```
+([ScriptBlock]::Create(((Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/dnlrv/PlatformPlus/main/PlatformPlus.ps1').Content))).Invoke()
+```
+
 ## Requirements
 
 This script has only one requirement:
