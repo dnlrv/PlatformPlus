@@ -137,6 +137,63 @@ function global:Set-PlatformConnection
 ###########
 
 ###########
+#region ### global:Search-PlatformDirectory # Searches existing directories for principals or roles and returns the Name and ID
+###########
+function global:Search-PlatformDirectory
+{
+    param
+    (
+		[Parameter(Mandatory = $true, HelpMessage = "Specify the User to find from DirectoryServices.",ParameterSetName = "User")]
+		[System.Object]$User,
+
+		[Parameter(Mandatory = $true, HelpMessage = "Specify the Group to find from DirectoryServices.",ParameterSetName = "Group")]
+		[System.Object]$Group,
+
+		[Parameter(Mandatory = $true, HelpMessage = "Specify the Role to find from DirectoryServices.",ParameterSetName = "Role")]
+		[System.Object]$Role
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    # building the query from parameter set
+    Switch ($PSCmdlet.ParameterSetName)
+    {
+        "User"  { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSUsers WHERE SystemName LIKE '%{0}%'" -f $User); break }
+        "Role"  { $query = ("SELECT ID,Name FROM Role WHERE Name LIKE '%{0}%'" -f $Role); break }
+        "Group" { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSGroups WHERE SystemName LIKE '%{0}%'" -f $Group); break }
+    }
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # make the query
+    $sqlquery = Query-VaultRedRock -SqlQuery $query
+
+    # new ArrayList to hold multiple entries
+    $principals = New-Object System.Collections.ArrayList
+
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        # for each secret in the query
+        foreach ($principal in $sqlquery)
+        {
+            # Counter for the principal objects
+            $p++; Write-Progress -Activity "Processing Principals into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            # creating the PlatformPrincipal object
+            $obj = [PlatformPrincipal]::new($principal.Name, $principal.ID)
+
+            $principals.Add($obj) | Out-Null
+        }# foreach ($principal in $sqlquery)
+    }# if ($sqlquery -ne $null)
+
+    return $principals
+}# function global:Search-PlatformDirectory
+#endregion
+###########
+
+###########
 #region ### global:Get-PlatformSecret # Gets a PlatformSecret object from the tenant
 ###########
 function global:Get-PlatformSecret
@@ -2240,6 +2297,19 @@ class PlatformConnection
     }
 }# class PlatformConnection
 
+# class to hold SearchPrincipals
+class PlatformPrincipal
+{
+    [System.String]$Name
+    [System.String]$ID
+
+    PlatformPrincipal($n,$i)
+    {
+        $this.Name = $n
+        $this.ID = $i
+    }
+}# class PlatformPrincipal
+
 # class to hold a custom PlatformError
 class PlatformAPIException : System.Exception
 {
@@ -2268,5 +2338,5 @@ class PlatformRowAceException : System.Exception
 #endregion ############################
 #######################################
 
-# initializing a List[PlatformConnection]
-$global:PlatformConnections = New-Object System.Collections.Generic.List[PlatformConnection]
+# initializing a List[PlatformConnection] if it is empty or null
+if ($global:PlatformConnections -eq $null) {$global:PlatformConnections = New-Object System.Collections.Generic.List[PlatformConnection]}
