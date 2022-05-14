@@ -573,6 +573,74 @@ function global:Get-PlatformSystem
 ###########
 
 ###########
+#region ### global:Get-PlatformRole # Gets Platform Role objects, along with the role's Members and Assigned Adminisrtative Rights
+###########
+function global:Get-PlatformRole
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Role to search.", ParameterSetName = "Name")]
+        [System.String]$Name
+    )
+
+    # verify an active platform connection
+    Verify-PlatformConnection
+
+    # set the base query
+    $query = "Select * FROM Role"
+
+    # arraylist for extra options
+    $extras = New-Object System.Collections.ArrayList
+
+    # if the All set was not used
+    if ($PSCmdlet.ParameterSetName -ne "All")
+    {
+        # appending the WHERE 
+        $query += " WHERE "
+        
+        if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("Name = '{0}'" -f $Name)) | Out-Null }
+        # if ($PSBoundParameters.ContainsKey("SuppressPrincipalsList")) { $extras.Add(("SuppressPrincipalsList = '{0}'" -f $FQDN)) | Out-Null }
+
+        # join them together with " AND " and append it to the query
+        $query += ($extras -join " AND ")
+    }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # making the query
+    $sqlquery = Query-VaultRedRock -SQLQuery $query
+
+    # ArrayList to hold objects
+    $queries = New-Object System.Collections.ArrayList
+
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        foreach ($q in $sqlquery)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Roles into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            Write-Verbose ("Working with Role [{0}]" -f $q.Name)
+
+            # create a new Platform System object
+            $role = [PlatformRole]::new($q)
+
+            $queries.Add($role) | Out-Null
+        }# foreach ($q in $query)
+    }# if ($sqlquery -ne $null)
+    else
+    {
+        return $false
+    }
+    #return $queries
+    return $queries
+}# function global:Get-PlatformRole
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -2009,6 +2077,89 @@ class PlatformSystem
         }
     }
 }# class PlatformSystem
+
+# class to hold Roles
+class PlatformRole
+{
+    [System.String]$ID
+    [System.String]$Name
+    [System.String]$RoleType
+    [System.Boolean]$ReadOnly
+    [System.String]$Description
+    [System.String]$DirectoryServiceUuid
+    [System.Collections.ArrayList]$Members = @{} # Members of the role
+    [System.Collections.ArrayList]$AssignedRights = @{} # Assigned administrative rights of the role
+
+    PlatformRole($role)
+    {
+        $this.ID = $role.ID
+        $this.Name = $role.Name
+        $this.RoleType = $role.RoleType
+        $this.ReadOnly = $role.ReadOnly
+        $this.Description = $role.Description
+        $this.DirectoryServiceUuid = $role.DirectoryServiceUuid
+        $this.getRoleMembers()
+        $this.getRoleAssignedRights()
+    }# PlatformRole($role)
+
+    getRoleMembers()
+    {
+        # get the Role Members
+        $rm = ((Invoke-PlatformAPI -APICall ("SaasManage/GetRoleMembers?name={0}" -f $this.ID)).Results.Row)
+        
+        # if there are more than 0 members
+        if ($rm.Count -gt 0)
+        {
+            foreach ($r in $rm)
+            {
+                $this.Members.Add(([PlatformRoleMember]::new($r))) | Out-Null
+            }
+        }
+    }# getRoleMembers()
+
+    getRoleAssignedRights()
+    {
+        # get the role's assigned administrative rights
+        $ar = ((Invoke-PlatformAPI -APICall ("core/GetAssignedAdministrativeRights?role={0}" -f $this.ID)).Results.Row)
+        
+        # if there are more than 0 assigned rights
+        if ($ar.Count -gt 0)
+        {
+            foreach ($a in $ar)
+            {
+                $this.AssignedRights.Add(([PlatformRoleAssignedRights]::new($a))) | Out-Null
+            }
+        }
+    }# getRoleAssignedRights()
+}# class PlatformRole
+
+# class to hold Role Members
+class PlatformRoleMember
+{
+    [System.String]$Guid
+    [System.String]$Name
+    [System.String]$Type
+
+    PlatformRoleMember($roleMember)
+    {
+        $this.Guid = $roleMember.Guid
+        $this.Name = $roleMember.Name
+        $this.Type = $roleMember.Type
+    }# PlatformRoleMember($roleMember)
+}# class PlatformRoleMember
+
+# class to hold Role Assigned Administrative Rights
+class PlatformRoleAssignedRights
+{
+    [System.String]$Description
+    [System.String]$Path
+
+    PlatformRoleAssignedRights($assignedRights)
+    {
+        $this.Description = $assignedRights.Description
+        $this.Path = $assignedRights.Path
+    }# PlatformRoleAssignedRights($assignedRights)
+}# class PlatformRoleAssignedRights
 
 # class to hold a PlatformZoneRoleWorkflow Role
 class PlatformZoneRoleWorkflowRole
