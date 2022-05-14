@@ -110,6 +110,33 @@ function global:Query-VaultRedRock
 ###########
 
 ###########
+#region ### global:Set-PlatformConnection # Changes the PlatformConnection information to another connected tenant.
+###########
+function global:Set-PlatformConnection
+{
+    param
+    (
+		[Parameter(Mandatory = $true, HelpMessage = "The PodFqdn to switch to for authentication.")]
+		[System.String]$PodFqdn
+    )
+
+    # if the $PlatformConnections contains the podFqdn in it's list
+    if ($thisconnection = $global:PlatformConnections | Where-Object {$_.PodFqdn -eq $PodFqdn})
+    {
+        # change the PlatformConnection and SessionInformation to the requested tenant
+        $global:SessionInformation = $thisconnection.SessionInformation
+        $global:PlatformConnection = $thisconnection.PlatformConnection
+        return $true
+    }# if ($thisconnection = $global:PlatformConnections | Where-Object {$_.PodFqdn -eq $PodFqdn})
+    else
+    {
+        return $false
+    }
+}# function global:Set-PlatformConnection
+#endregion
+###########
+
+###########
 #region ### global:Get-PlatformSecret # Gets a PlatformSecret object from the tenant
 ###########
 function global:Get-PlatformSecret
@@ -794,6 +821,14 @@ function global:Connect-DelineaPlatform
 
                 # setting the splat
                 $global:SessionInformation = @{ Headers = $PlatformConnection.Session.Headers }
+
+                # if the $PlatformConnections variable does not contain this Connection, add it
+                if (-Not ($PlatformConnections | Where-Object {$_.PodFqdn -eq $Connection.PodFqdn}))
+                {
+                    # add a new PlatformConnection object and add it to our $PlatformConnectionsList
+                    $obj = [PlatformConnection]::new($Connection.PodFqdn,$Connection,$global:SessionInformation)
+                    $global:PlatformConnections.Add($obj) | Out-Null
+                }
 				
 				# Return information values to confirm connection success
 				return ($Connection | Select-Object -Property CustomerId, User, PodFqdn | Format-List)
@@ -980,6 +1015,14 @@ function global:Connect-DelineaPlatform
 
                                 # setting the splat for variable connection 
                                 $global:SessionInformation = @{ WebSession = $PlatformConnection.Session }
+
+                                # if the $PlatformConnections variable does not contain this Connection, add it
+                                if (-Not ($PlatformConnections | Where-Object {$_.PodFqdn -eq $Connection.PodFqdn}))
+                                {
+                                    # add a new PlatformConnection object and add it to our $PlatformConnectionsList
+                                    $obj = [PlatformConnection]::new($Connection.PodFqdn,$Connection,$global:SessionInformation)
+                                    $global:PlatformConnections.Add($obj) | Out-Null
+                                }
 				
 				                # Return information values to confirm connection success
 				                return ($Connection | Select-Object -Property CustomerId, User, PodFqdn | Format-List)
@@ -2182,6 +2225,21 @@ class PlatformZoneRoleWorkflowRole
     }# PlatformZoneRoleWorkflowRole ($zoneworkflowrole)
 }# class PlatformZoneRoleWorkflowRole
 
+# class to hold PlatformConnections
+class PlatformConnection
+{
+    [System.String]$PodFqdn
+    [PSCustomObject]$PlatformConnection
+    [System.Collections.Hashtable]$SessionInformation
+
+    PlatformConnection($po,$pc,$s)
+    {
+        $this.PodFqdn = $po
+        $this.PlatformConnection = $pc
+        $this.SessionInformation = $s
+    }
+}# class PlatformConnection
+
 # class to hold a custom PlatformError
 class PlatformAPIException : System.Exception
 {
@@ -2209,3 +2267,6 @@ class PlatformRowAceException : System.Exception
 #######################################
 #endregion ############################
 #######################################
+
+# initializing a List[PlatformConnection]
+$global:PlatformConnections = New-Object System.Collections.Generic.List[PlatformConnection]
