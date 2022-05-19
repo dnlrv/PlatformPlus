@@ -798,7 +798,6 @@ function global:Connect-DelineaPlatform
 	param
 	(
 		[Parameter(Mandatory = $false, Position = 0, HelpMessage = "Specify the URL to use for the connection (e.g. oceanlab.my.centrify.com).")]
-		[Parameter(ParameterSetName = "Interactive")]
 		[System.String]$Url,
 		
 		[Parameter(Mandatory = $true, ParameterSetName = "Interactive", HelpMessage = "Specify the User login to use for the connection (e.g. CloudAdmin@oceanlab.my.centrify.com).")]
