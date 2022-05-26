@@ -95,6 +95,9 @@ function global:Query-VaultRedRock
 	$Arguments.Caching		= 0
 	$Arguments.FilterQuery	= "null"
 
+    # replacing single apstrophes
+    $SQLQuery = $SQLQuery -replace "(?<=\w)(')","''"
+
     # Build the JsonQuery string
 	$JsonQuery = @{}
 	$JsonQuery.Script 	= $SQLQuery
@@ -595,7 +598,10 @@ function global:Get-PlatformSystem
         [System.String]$FQDN,
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the System to search.",ParameterSetName = "Uuid")]
-        [System.String]$Uuid
+        [System.String]$Uuid,
+
+        [Parameter(Mandatory = $false, HelpMessage = "A limit on number of objects to query.")]
+        [System.Int32]$Limit = 0
     )
 
     # verifying an active platform connection
@@ -620,6 +626,12 @@ function global:Get-PlatformSystem
         # join them together with " AND " and append it to the query
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    # if $Limit was used
+    if ($Limit -gt 0)
+    {
+        $query = $query + (" LIMIT {0}" -f $Limit)
+    }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
