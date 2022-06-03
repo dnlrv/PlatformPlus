@@ -95,9 +95,6 @@ function global:Query-VaultRedRock
 	$Arguments.Caching		= 0
 	$Arguments.FilterQuery	= "null"
 
-    # replacing single apstrophes
-    $SQLQuery = $SQLQuery -replace "(?<=\w)(')","''"
-
     # Build the JsonQuery string
 	$JsonQuery = @{}
 	$JsonQuery.Script 	= $SQLQuery
@@ -140,7 +137,7 @@ function global:Set-PlatformConnection
 ###########
 
 ###########
-#region ### global:Search-PlatformDirectory # Searches existing directories for principals or roles and returns the Name and ID
+#region ### global:Search-PlatformDirectory # Searches existing directories for principals or roles and returns the Name and ID by like searches
 ###########
 function global:Search-PlatformDirectory
 {
@@ -163,7 +160,7 @@ function global:Search-PlatformDirectory
     Switch ($PSCmdlet.ParameterSetName)
     {
         "User"  { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSUsers WHERE SystemName LIKE '%{0}%'" -f $User); break }
-        "Role"  { $query = ("SELECT ID,Name FROM Role WHERE Name LIKE '%{0}%'" -f $Role); break }
+        "Role"  { $query = ("SELECT ID,Name FROM Role WHERE Name LIKE '%{0}%'" -f ($Role -replace "'","''")); break }
         "Group" { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSGroups WHERE SystemName LIKE '%{0}%'" -f $Group); break }
     }
 
@@ -193,6 +190,63 @@ function global:Search-PlatformDirectory
 
     return $principals
 }# function global:Search-PlatformDirectory
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformPrincipal # Searches existing directories for principals or roles and returns the Name and ID by exact searches
+###########
+function global:Get-PlatformPrincipal
+{
+    param
+    (
+		[Parameter(Mandatory = $true, HelpMessage = "Specify the User to find from DirectoryServices.",ParameterSetName = "User")]
+		[System.Object]$User,
+
+		[Parameter(Mandatory = $true, HelpMessage = "Specify the Group to find from DirectoryServices.",ParameterSetName = "Group")]
+		[System.Object]$Group,
+
+		[Parameter(Mandatory = $true, HelpMessage = "Specify the Role to find from DirectoryServices.",ParameterSetName = "Role")]
+		[System.Object]$Role
+    )
+
+    # verifying an active platform connection
+    Verify-PlatformConnection
+
+    # building the query from parameter set
+    Switch ($PSCmdlet.ParameterSetName)
+    {
+        "User"  { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSUsers WHERE SystemName = '{0}'" -f $User); break }
+        "Role"  { $query = ("SELECT ID,Name FROM Role WHERE Name = '{0}'" -f ($Role -replace "'","''")); break }
+        "Group" { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSGroups WHERE SystemName = '{0}'" -f $Group); break }
+    }
+
+    Write-Verbose ("SQLQuery: [{0}]" -f $query)
+
+    # make the query
+    $sqlquery = Query-VaultRedRock -SqlQuery $query
+
+    # new ArrayList to hold multiple entries
+    $principals = New-Object System.Collections.ArrayList
+
+    # if the query isn't null
+    if ($sqlquery -ne $null)
+    {
+        # for each secret in the query
+        foreach ($principal in $sqlquery)
+        {
+            # Counter for the principal objects
+            $p++; Write-Progress -Activity "Processing Principals into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            # creating the PlatformPrincipal object
+            $obj = [PlatformPrincipal]::new($principal.Name, $principal.ID)
+
+            $principals.Add($obj) | Out-Null
+        }# foreach ($principal in $sqlquery)
+    }# if ($sqlquery -ne $null)
+
+    return $principals
+}# function global:Get-PlatformPrincipal
 #endregion
 ###########
 
@@ -1198,9 +1252,9 @@ function global:Convert-PermissionToString
         "ManualBucket|SqlDynamic"    
                            { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet     = 8; DeleteSet    = 64} ; break }
         "Phantom"          { $AceHash = @{ GrantFolder = 1; ViewFolder = 4; EditFolder  = 8; DeleteFolder = 64; AddFolder = 65536} ; break }
-        "Server"           { $AceHash = @{ GrantServer = 1; ViewServer = 4; EditServer  = 8; DeleteServer = 64; AgentAuthServer = 65536; 
-                                           ManageSessionServer = 128; RequestZoneRoleServer = 131072; AddAccountServer = 524288;
-                                           UnlockAccountServer = 1048576; OfflineRescueServer = 2097152;  AddPrivilegeElevationServer = 4194304}; break }
+        "Server"           { $AceHash = @{ Grant = 1; View = 4; Edit  = 8; Delete = 64; AgentAuth = 65536; 
+                                           ManageSession = 128; RequestZoneRole = 131072; AddAccount = 524288;
+                                           UnlockAccount = 1048576; OfflineRescue = 2097152;  ManagePrivilegeElevationAssignment = 4194304}; break }
         "Domain"           { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; DeleteAccount = 64; LoginAccount = 128; CheckoutAccount = 65536; 
                                            UpdatePasswordAccount = 131072; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
         "Cloud"            { $AceHash = @{ GrantCloudAccount = 1; ViewCloudAccount = 4; EditVaultAccount = 8; DeleteCloudAccount = 64; UseAccessKey = 128;
@@ -1490,8 +1544,9 @@ function global:Prepare-WorkflowApprovers
     foreach ($approver in $Approvers)
     {        
         # if the approver contains the NoManagerAction AND the BackupApprover Properties
-        if ((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction") -and `
-            (($approver | Get-Member -MemberType NoteProperty).Name).Contains("BackupApprover"))
+        #if ((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction") -and `
+        #    (($approver | Get-Member -MemberType NoteProperty).Name).Contains("BackupApprover"))
+        if ($approver.NoManagerAction -ne $null -and $approver.BackupApprover -ne $null)
         {
             # then this is a specified backup approver
             $backup = $approver.BackupApprover
@@ -2104,15 +2159,19 @@ class PlatformSystem
     [System.String]$Description
     [System.String]$FQDN
     [System.String]$ComputerClass
+    [System.String]$SessionType
     [System.String]$ID
     [System.String]$ProxyUser
     [System.Boolean]$ProxyUserIsManaged
     [System.Int32]$ActiveCheckouts
+    [System.Boolean]$DomainOperationsEnabled
+    [System.String]$DomainName
     [System.String]$DomainId
     [System.String]$ZoneStatus
-    [System.Boolean]$UseDomainWorkflowApprovers
     [System.Boolean]$ZoneRoleWorkflowEnabled
+    [System.Boolean]$UseDomainWorkflowRoles
     [PlatformZoneRoleWorkflowRole[]]$ZoneRoleWorkflowRoles
+    [System.Boolean]$UseDomainWorkflowApprovers
     [PlatformWorkflowApprover[]]$ZoneRoleWorkflowApprovers
     [System.String]$AgentVersion
     [System.String]$OperatingSystem
@@ -2131,12 +2190,15 @@ class PlatformSystem
         $this.Description = $system.Description
         $this.FQDN = $system.FQDN
         $this.ComputerClass = $system.ComputerClass
+        $this.SessionType = $system.SessionType
         $this.ID = $system.ID
         $this.ProxyUser = $system.ProxyUser
         $this.ProxyUserIsManaged = $system.ProxyUserIsManaged
-        $this.ActiveCheckouts = $system.ActiveCheckouts
+        $this.DomainOperationsEnabled = $system.DomainOperationsEnabled
+        $this.DomainName = $system.DomainName
         $this.DomainId = $system.DomainId
         $this.ZoneStatus = $system.ZoneStatus
+        $this.UseDomainWorkflowRoles = $system.UseDomainWorkflowRoles
         $this.UseDomainWorkflowApprovers = $system.UseDomainWorkflowApprovers
         $this.ZoneRoleWorkflowEnabled = $system.ZoneRoleWorkflowEnabled
         $this.AgentVersion = $system.AgentVersion
@@ -2145,7 +2207,12 @@ class PlatformSystem
         $this.LastState = $system.LastState
         $this.HealthStatusError = $system.HealthStatusError
         $this.ReachableError = $system.ReachableError
-        $this.LastHealthCheck = $system.LastHealthCheck
+        
+        # accounting for null
+        if ($system.LastHealthCheck -ne $null)
+        {
+            $this.LastHealthCheck = $system.LastHealthCheck
+        }
         
         # getting the RowAces for this System
         $this.PermissionRowAces = Get-PlatformRowAce -Type "SERVER" -Uuid $this.ID
