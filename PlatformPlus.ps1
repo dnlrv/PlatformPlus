@@ -1872,8 +1872,6 @@ class PlatformWorkflowApprover
     [System.String]$_ID
     [System.Boolean]$ReadOnly
     [System.String]$Description
-    [System.Boolean]$Windows
-    [System.Boolean]$Unix
 
     PlatformWorkflowApprover($approver, $isBackup)
     {
@@ -2346,6 +2344,7 @@ class PlatformZoneRoleWorkflowRole
 {
     [System.String]$Name
     [System.Boolean]$Unix
+    [System.Boolean]$Windows
     [System.String]$ZoneDN
     [System.String]$Description
     [System.String]$ZoneCanonicalName
@@ -2355,6 +2354,7 @@ class PlatformZoneRoleWorkflowRole
     {
         $this.Name = $zoneworkflowrole.Name
         $this.Unix = $zoneworkflowrole.Unix
+        $this.Windows = $zoneworkflowrole.Windows
         $this.ZoneDN = $zoneworkflowrole.ZoneDn
         $this.Description = $zoneworkflowrole.Description
         $this.ZoneCanonicalName = $zoneworkflowrole.ZoneCanonicalName
