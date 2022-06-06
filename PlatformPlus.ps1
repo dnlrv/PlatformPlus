@@ -1872,6 +1872,8 @@ class PlatformWorkflowApprover
     [System.String]$_ID
     [System.Boolean]$ReadOnly
     [System.String]$Description
+    [System.Boolean]$Windows
+    [System.Boolean]$Unix
 
     PlatformWorkflowApprover($approver, $isBackup)
     {
