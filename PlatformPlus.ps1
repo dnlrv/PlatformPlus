@@ -218,7 +218,7 @@ function global:Get-PlatformPrincipal
     {
         "User"  { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSUsers WHERE SystemName = '{0}'" -f $User); break }
         "Role"  { $query = ("SELECT ID,Name FROM Role WHERE Name = '{0}'" -f ($Role -replace "'","''")); break }
-        "Group" { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSGroups WHERE SystemName = '{0}'" -f $Group); break }
+        "Group" { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSGroups WHERE SystemName LIKE '{0}'" -f $Group); break }
     }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
@@ -436,7 +436,7 @@ function global:Get-PlatformAccount
         [Parameter(Mandatory = $false, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Type")]
         [System.String]$SourceName,
 
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Account to search.", ParameterSetName = "Name")]
+        [Parameter(Mandatory = $true, HelpMessage = "The name of the Account to search.", ParameterSetName = "UserName")]
         [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
         [System.String]$UserName,
 
@@ -1259,9 +1259,9 @@ function global:Convert-PermissionToString
                                            UpdatePasswordAccount = 131072; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
         "Cloud"            { $AceHash = @{ GrantCloudAccount = 1; ViewCloudAccount = 4; EditVaultAccount = 8; DeleteCloudAccount = 64; UseAccessKey = 128;
                                            RetrieveCloudAccount = 65536} ; break }
-        "Local|Account|VaultAccount" 
-                           { $AceHash = @{ GrantAccount = 1; ViewAccount = 4; EditAccount = 8; DeleteAccount = 64; LoginAccount = 128;  CheckoutAccount = 65536; 
-                                           UpdatePasswordAccount = 131072; WorkspaceLoginAccount = 262147; RotateAccount = 524288; FileTransferAccount = 1048576}; break }
+        "Local|Account|VaultAccount" # Owner,View,Manage,Delete,Login,Naked,UpdatePassword,FileTransfer,UserPortalLogin 262276
+                           { $AceHash = @{ Owner = 1; View = 4; Manage = 8; Delete = 64; Login = 128;  Naked = 65536; 
+                                           UpdatePassword = 131072; UserPortalLogin = 262144; RotateAccount = 524288; FileTransfer = 1048576}; break }
         "Database|VaultDatabase"
                            { $AceHash = @{ GrantDatabaseAccount = 1; ViewDatabaseAccount = 4; EditDatabaseAccount = 8; DeleteDatabaseAccount = 64;
                                            CheckoutDatabaseAccount = 65536; UpdatePasswordDatabaseAccount = 131072; RotateDatabaseAccount = 524288}; break }
@@ -1565,8 +1565,9 @@ function global:Prepare-WorkflowApprovers
             $obj = [PlatformWorkflowApprover]::new($approver, $true)
         }
         # otherwise if the NoManagerAction exists and it contains either "approve" or "deny"
-        elseif (((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction")) -and `
-                ($approver.NoManagerAction -eq "approve" -or ($approver.NoManagerAction -eq "deny")))
+        #elseif (((($approver | Get-Member -MemberType NoteProperty).Name).Contains("NoManagerAction")) -and `
+        #        ($approver.NoManagerAction -eq "approve" -or ($approver.NoManagerAction -eq "deny")))
+        elseif ($approver.NoManagerAction -eq "approve" -or ($approver.NoManagerAction -eq "deny"))
         {
             # create our new PlatformWorkflowApprover object with the isBackup property set to true
             $obj = [PlatformWorkflowApprover]::new($approver, $true)
@@ -2043,11 +2044,16 @@ class PlatformAccount
             "Cloud"    { $this.SourceID = $account.CloudProviderID; $this.SourceType = "CloudProviderId"; break }
         }
 
+        # accounting for null
+        if ($account.LastHealthCheck -ne $null)
+        {
+            $this.LastHealthCheck = $account.LastHealthCheck
+        }
+
         $this.Username = $account.User
         $this.ID = $account.ID
         $this.isManaged = $account.IsManaged
         $this.Healthy = $account.Healthy
-        $this.LastHealthCheck = $account.LastHealthCheck
         $this.Description = $account.Description
         $this.SSName = ("{0}\{1}" -f $this.SourceName, $this.Username)
 
@@ -2150,6 +2156,26 @@ class PlatformAccount
             return $false
         }
     }# VerifyPassword()
+
+    [System.Boolean] UpdatePassword()
+    {
+        # if the account was successfully managed
+        if ($updatepassword = Invoke-PlatformAPI ServerManage/UpdatePassword -Body (@{ID=$this.ID;Password=$this.Password}|ConvertTo-Json))
+        {
+            return $true
+        }
+        return $false
+    }# [System.Boolean] ManageAccount()
+
+    [System.Boolean] UpdatePassword($password)
+    {
+        # if the account was successfully managed
+        if ($updatepassword = Invoke-PlatformAPI ServerManage/UpdatePassword -Body (@{ID=$this.ID;Password=$password}|ConvertTo-Json))
+        {
+            return $true
+        }
+        return $false
+    }# [System.Boolean] ManageAccount()
 }# class PlatformAccount
 
 # class to hold Systems
