@@ -1261,7 +1261,7 @@ function global:Convert-PermissionToString
                                            RetrieveCloudAccount = 65536} ; break }
         "Local|Account|VaultAccount" # Owner,View,Manage,Delete,Login,Naked,UpdatePassword,FileTransfer,UserPortalLogin 262276
                            { $AceHash = @{ Owner = 1; View = 4; Manage = 8; Delete = 64; Login = 128;  Naked = 65536; 
-                                           UpdatePassword = 131072; UserPortalLogin = 262144; RotateAccount = 524288; FileTransfer = 1048576}; break }
+                                           UpdatePassword = 131072; UserPortalLogin = 262144; RotatePassword = 524288; FileTransfer = 1048576}; break }
         "Database|VaultDatabase"
                            { $AceHash = @{ GrantDatabaseAccount = 1; ViewDatabaseAccount = 4; EditDatabaseAccount = 8; DeleteDatabaseAccount = 64;
                                            CheckoutDatabaseAccount = 65536; UpdatePasswordDatabaseAccount = 131072; RotateDatabaseAccount = 524288}; break }
