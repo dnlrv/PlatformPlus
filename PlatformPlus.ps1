@@ -218,7 +218,7 @@ function global:Get-PlatformPrincipal
     {
         "User"  { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSUsers WHERE SystemName = '{0}'" -f $User); break }
         "Role"  { $query = ("SELECT ID,Name FROM Role WHERE Name = '{0}'" -f ($Role -replace "'","''")); break }
-        "Group" { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSGroups WHERE SystemName LIKE '{0}'" -f $Group); break }
+        "Group" { $query = ("SELECT InternalName AS ID,SystemName AS Name FROM DSGroups WHERE SystemName LIKE '%{0}%'" -f $Group); break }
     }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
@@ -442,7 +442,10 @@ function global:Get-PlatformAccount
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to search.",ParameterSetName = "Uuid")]
         [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
-        [System.String]$Uuid
+        [System.String]$Uuid,
+
+        [Parameter(Mandatory = $false, HelpMessage = "A limit on number of objects to query.")]
+        [System.Int32]$Limit = 0
     )
 
     # verifying an active platform connection
@@ -479,6 +482,12 @@ function global:Get-PlatformAccount
         # join them together with " AND " and append it to the query
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    # if $Limit was used
+    if ($Limit -gt 0)
+    {
+        $query = $query + (" LIMIT {0}" -f $Limit)
+    }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
@@ -1248,9 +1257,9 @@ function global:Convert-PermissionToString
     switch -Regex ($Type)
     {
         "Secret|DataVault" { $AceHash = @{ GrantSecret = 1; ViewSecret = 4; EditSecret  = 8; DeleteSecret = 64; RetrieveSecret = 65536} ; break }
-        "Set"              { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet     = 8; DeleteSet    = 64} ; break }
+        "Set"              { $AceHash = @{ Grant    = 1; View    = 4; Edit    = 8; Delete    = 64} ; break } #Grant,View,Edit,Delete
         "ManualBucket|SqlDynamic"    
-                           { $AceHash = @{ GrantSet    = 1; ViewSet    = 4; EditSet     = 8; DeleteSet    = 64} ; break }
+                           { $AceHash = @{ Grant    = 1; View    = 4; Edit     = 8; Delete    = 64} ; break }
         "Phantom"          { $AceHash = @{ GrantFolder = 1; ViewFolder = 4; EditFolder  = 8; DeleteFolder = 64; AddFolder = 65536} ; break }
         "Server"           { $AceHash = @{ Grant = 1; View = 4; Edit  = 8; Delete = 64; AgentAuth = 65536; 
                                            ManageSession = 128; RequestZoneRole = 131072; AddAccount = 524288;
@@ -1902,6 +1911,7 @@ class PlatformSet
     [System.Collections.ArrayList]$SetMembers  = @{} # the members of this set
     [System.String]$PotentialOwner                   # a guess as to who possibly owns this set
 
+
     PlatformSet($set)
     {
         $this.SetType = $set.CollectionType
@@ -1929,13 +1939,13 @@ class PlatformSet
     getMembers()
     {
         # getting the set members
-        $m = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID = $this.ID} | ConvertTo-Json)
-        
-        # if there are more than 0 members
-        if ($m.Count -gt 0)
+        if ($m = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID = $this.ID} | ConvertTo-Json))
         {
             # Adding the Uuids to the Members property
-            $this.MembersUuid.AddRange(($m | Select-Object -ExpandProperty Key))
+            foreach ($u in $m)
+            {
+                $this.MembersUuid.Add($u.Key) | Out-Null
+            }
 
             # for each item in the query
             foreach ($i in $m)
@@ -1946,7 +1956,8 @@ class PlatformSet
                 Switch ($i.Table)
                 {
                     "DataVault"    {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,SecretName AS Name FROM DataVault WHERE ID = '{0}'" -f $i.Key); break }
-                    "VaultAccount" {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID As Uuid,(Name || '\' || User) AS Name FROM VaultAccount WHERE ID = '{0}'" -f $i.Key); break }
+                    "VaultAccount" {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,(Name || '\' || User) AS Name FROM VaultAccount WHERE ID = '{0}'" -f $i.Key); break }
+                    "Server"       {$obj = Query-VaultRedRock -SQLQuery ("SELECT ID AS Uuid,Name FROM Server WHERE ID = '{0}'" -f $i.Key); break }
                 }
                 
                 $this.SetMembers.Add(([SetMember]::new($obj.Name,$i.Table,$obj.Uuid))) | Out-Null
