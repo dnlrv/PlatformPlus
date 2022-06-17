@@ -1256,11 +1256,11 @@ function global:Convert-PermissionToString
     # setting our readable permission hash based on our object type
     switch -Regex ($Type)
     {
-        "Secret|DataVault" { $AceHash = @{ GrantSecret = 1; ViewSecret = 4; EditSecret  = 8; DeleteSecret = 64; RetrieveSecret = 65536} ; break }
+        "Secret|DataVault" { $AceHash = @{ Grant = 1; View = 4; Edit  = 8; Delete = 64; Retrieve = 65536} ; break } # Grant,View,Edit,Delete,Retrieve
         "Set"              { $AceHash = @{ Grant    = 1; View    = 4; Edit    = 8; Delete    = 64} ; break } #Grant,View,Edit,Delete
         "ManualBucket|SqlDynamic"    
                            { $AceHash = @{ Grant    = 1; View    = 4; Edit     = 8; Delete    = 64} ; break }
-        "Phantom"          { $AceHash = @{ GrantFolder = 1; ViewFolder = 4; EditFolder  = 8; DeleteFolder = 64; AddFolder = 65536} ; break }
+        "Phantom"          { $AceHash = @{ Grant = 1; View = 4; Edit  = 8; Delete = 64; Add = 65536} ; break } # Grant,View,Edit,Delete,Add
         "Server"           { $AceHash = @{ Grant = 1; View = 4; Edit  = 8; Delete = 64; AgentAuth = 65536; 
                                            ManageSession = 128; RequestZoneRole = 131072; AddAccount = 524288;
                                            UnlockAccount = 1048576; OfflineRescue = 2097152;  ManagePrivilegeElevationAssignment = 4194304}; break }
@@ -1905,6 +1905,7 @@ class PlatformSet
     [System.String]$ID
     [System.String]$Description
     [System.DateTime]$whenCreated
+    [System.String]$ParentPath
     [PlatformRowAce[]]$PermissionRowAces             # permissions of the Set object itself
     [PlatformRowAce[]]$MemberPermissionRowAces       # permissions of the members for this Set object
     [System.Collections.ArrayList]$MembersUuid = @{} # the Uuids of the members
@@ -1919,6 +1920,7 @@ class PlatformSet
         $this.Name = $set.Name
         $this.ID = $set.ID
         $this.Description = $set.Description
+        $this.ParentPath = $set.ParentPath
 
         if ($set.whenCreated -ne $null)
         {
