@@ -885,7 +885,10 @@ function global:Connect-DelineaPlatform
         [System.String]$Scope,
 
 		[Parameter(Mandatory = $true, ParameterSetName = "OAuth2", HelpMessage = "Specify the OAuth2 Secret to use for the ClientID.")]
-        [System.String]$Secret
+        [System.String]$Secret,
+
+        [Parameter(Mandatory = $false, ParameterSetName = "Base64", HelpMessage = "Encode Base64 Secret to use for OAuth2.")]
+        [Switch]$EncodeSecret
 	)
 	
 	# Debug preference
@@ -907,6 +910,17 @@ function global:Connect-DelineaPlatform
 
         # Delete any existing connexion cache
         $Global:PlatformConnection = [Void]$null
+
+        if ($EncodeSecret.IsPresent)
+        {
+             # Get Confidential Client name and password
+             $Client = Read-Host "Confidential Client name"
+             $SecureString = Read-Host "Password" -AsSecureString
+             $Password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString))
+             # Return Base64 encoded secret
+             $AuthenticationString = ("{0}:{1}" -f $Client, $Password)
+             return ("Secret: {0}" -f [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($AuthenticationString)))
+        }
 
 		if (-not [System.String]::IsNullOrEmpty($Client))
         {
