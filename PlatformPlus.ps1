@@ -817,6 +817,102 @@ function global:Get-PlatformRole
 #######################################
 
 ###########
+#region ### global:Are-SetMembersInOtherSets # Finds if a Set's members also appear in other Sets
+###########
+function global:Are-SetMembersInOtherSets
+{
+    param
+    (
+        [Parameter(Mandatory=$true, HelpMessage = "The Platform Set to check to see if all the members are unique.")]
+        [PSObject]$Set,
+
+        [Parameter(Mandatory=$false, HelpMessage = "Print where the duplicates exist.")]
+        [Switch]$ShowMe
+    )
+
+    # if the Set has no members
+    if ($Set.MembersUuid.Count -eq 0)
+    {
+        Write-Host ("Set has no members.")
+        return $false
+    }
+
+    # nulling out any previous TenantSets
+    $TenantSets = $null
+
+    # get all sets with this set typ
+    $TenantSets = Query-VaultRedRock -SQLQuery ("SELECT ID,Name AS SetName FROM Sets WHERE CollectionType = 'ManualBucket' AND ObjectType = '{0}'" -f $Set.ObjectType)
+
+    # uuidbank for all uuids in all of these set types
+    $UuidBank = New-Object System.Collections.ArrayList
+
+    # for each set in all the sets with this set type
+    foreach ($TenantSet in $TenantSets)
+    {
+        # get the members of this set
+        $setmemberuuids = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID=$TenantSet.ID}|ConvertTo-Json) | Select-Object -ExpandProperty Key
+
+        # add the set members as a new property on this object
+        $TenantSet | Add-Member -MemberType NoteProperty -Name SetMembers -Value $setmemberuuids
+
+        # add all those uuids to our uuidbank
+        $UuidBank.AddRange(@($setmemberuuids)) | Out-Null
+    }
+    
+    # starting with a default of having no duplicates
+    [System.Boolean]$hasDuplicates = $false
+
+    # get all uuids that appear more than once in our uuidbank
+    $2ormore = $UuidBank | Group-Object | Where-Object {$_.Count -gt 1}
+
+    # for each set member in our original passed set
+    foreach ($setmember in ($TenantSets | Where-Object {$_.ID -eq $Set.ID} | Select-Object -ExpandProperty SetMembers))
+    {
+        # if our 2ormore list contains that set member
+        if ($2ormore.Name -contains $setmember)
+        {
+            # set hasDuplicates to true
+            $hasDuplicates = $true
+        }
+    }# foreach ($setmember in ($TenantSets | Where-Object {$_.ID -eq $Set.ID} | Select-Object -ExpandProperty SetMembers))
+
+    # if ShowMe is present and there are duplicates
+    if ($ShowMe.IsPresent -and $hasDuplicates -eq $true)
+    {
+        Write-Host ("The Set [{0}] has the following member duplicates:" -f $Set.Name)
+
+        # for each setmember in the set
+        foreach ($setmember in $Set.SetMembers)
+        {
+            # if the uuid field is blank, skip it
+            if ([System.String]::IsNullOrEmpty($setmember.Uuid))
+            {
+                continue
+            }
+
+            Write-Host ("- The member [{0}] also appears in the following Sets:" -f $setmember.Name)
+
+            # show the sets where this member is also a member of other sets
+            $AlsoAMemberOf = $TenantSets | Where-Object {$_.SetMembers -contains $setmember.Uuid}
+
+            # display that information
+            foreach ($memberset in $AlsoAMemberOf)
+            {
+                Write-host ("  - Set [{0}]" -f $memberset.SetName)
+            }
+        }# foreach ($setmember in $Set.SetMembers)
+    }#if ($ShowMe.IsPresent -and $hasDuplicates -eq $true)
+    elseif ($ShowMe.IsPresent)
+    {
+        Write-Host ("No duplicate membership was found.")
+    }
+
+    return $hasDuplicates
+}# function global:Are-SetMembersInOtherSets
+#endregion
+###########
+
+###########
 #region ### global:Get-PlatformBearerToken # Gets Platform Bearer Token information. Derived from Centrify.Platform.PowerShell.
 ###########
 function global:Get-PlatformBearerToken
