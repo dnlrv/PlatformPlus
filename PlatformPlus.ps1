@@ -7,11 +7,70 @@
 ###########
 function global:Verify-PlatformConnection
 {
+    <#
+    .SYNOPSIS
+    This function verifies you have an active connection to a Delinea Platform Tenant.
+
+    .DESCRIPTION
+    This function verifies you have an active connection to a Delinea Platform Tenant. It checks for the existance of a $PlatformConnection 
+    variable to first check if a connection has been made, then it makes a Security/whoami RestAPI call to ensure the connection is active and valid.
+    This function will store a date any only check if the last attempt was made more than 5 minutes ago. If the last verify attempt occured
+    less than 5 minutes ago, the check is skipped and a valid connection is assumed. This is done to prevent an overbundence of whoami calls to the 
+    Platform.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function only throws an error if there is a problem with the connection.
+
+    .EXAMPLE
+    C:\PS> Verify-PlatformConnection
+    This function will not return anything if there is a valid connection. It will throw an exception if there is no connection, or an 
+    expired connection.
+    #>
+
     if ($PlatformConnection -eq $null)
     {
-        Write-Host ("There is no existing `$PlatformConnection. Please use Connect-DelineaPlatform to connect to your Delinea tenant. Exiting.")
-        break
+        throw ("There is no existing `$PlatformConnection. Please use Connect-DelineaPlatform to connect to your Delinea tenant. Exiting.")
     }
+    else
+    {
+        Try
+        {
+            # check to see if Lastwhoami is available
+            if ($global:LastWhoamicheck)
+            {
+                # if it is, check to see if the current time is less than 5 minute from its previous whoami check
+                if ($(Get-Date).AddMinutes(-5) -lt $global:LastWhoamicheck)
+                {
+                    # if it has been less than 5 minutes, assume we're still connected
+                    return
+                }
+            }# if ($global:LastWhoamicheck)
+            
+            $uri = ("https://{0}/Security/whoami" -f $global:PlatformConnection.PodFqdn)
+
+            # calling Security/whoami
+            $WhoamiResponse = Invoke-RestMethod -Method Post -Uri $uri @global:SessionInformation
+           
+            # if the response was successful
+            if ($WhoamiResponse.Success)
+            {
+                # setting the last whoami check to reduce frequent whoami calls
+                $global:LastWhoamicheck = (Get-Date)
+                return
+            }
+            else
+            {
+                throw ("There is no active, valid Tenant connection. Please use Connect-DelineaPlatform to re-connect to your Delinea tenant. Exiting.")
+            }
+        }# Try
+        Catch
+        {
+            throw ("There is no active, valid Tenant connection. Please use Connect-DelineaPlatform to re-connect to your Delinea tenant. Exiting.")
+        }
+    }# else
 }# function global:Verify-PlatformConnection
 #endregion
 ###########
@@ -21,12 +80,46 @@ function global:Verify-PlatformConnection
 ###########
 function global:Invoke-PlatformAPI
 {
+    <#
+    .SYNOPSIS
+    This function will provide an easy way to interact with any RestAPI endpoint in a Delinea PAS tenant.
+
+    .DESCRIPTION
+    This function will provide an easy way to interact with any RestAPI endpoint in a Delinea PAS tenant. This function requires an existing, valid $PlatformConnection
+    to exist. At a minimum, the APICall parameter is required. 
+
+    .PARAMETER APICall
+    Specify the RestAPI endpoint to target. For example "Security/whoami" or "ServerManage/UpdateResource".
+
+    .PARAMETER Body
+    Specify the JSON body payload for the RestAPI endpoint.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs as PSCustomObject with the requested data if the RestAPI call was successful.
+
+    .EXAMPLE
+    C:\PS> Invoke-PlatfromAPI -APICall Security/whoami
+    This will attempt to reach the Security/whoami RestAPI endpoint to the currently connected PAS tenant. If there is a valid connection, basic 
+    information about the connected user will be returned as output.
+
+    .EXAMPLE
+    C:\PS> Invoke-PlatformAPI -APICall UserMgmt/ChangeUserAttributes -Body ( @{CmaRedirectedUserUuid=$normalid;ID=$adminid} | ConvertTo-Json)
+    This will attempt to set MFA redirection on a user recognized by the PAS tenant. The body in this example is a PowerShell HastTable converted into a JSON block.
+    The $normalid variable contains the UUID of the user to redirect to, and the $adminid is the UUID of the user who needs the redirect.
+
+    .EXAMPLE
+    C:\US> Invoke-PlatformAPI -APICall Collection/GetMembers -Body '{"ID":"aaaaaaaa-0000-0000-0000-eeeeeeeeeeee"}'
+    This will attempt to get the members of a Set via that Set's UUID. In this example, the JSON Body payload is already in JSON format.
+    #>
     param
     (
-        [Parameter(Mandatory = $true, HelpMessage = "Specify the API call to make.")]
+        [Parameter(Position = 0, Mandatory = $true, HelpMessage = "Specify the API call to make.")]
         [System.String]$APICall,
 
-        [Parameter(Mandatory = $false, HelpMessage = "Specify the JSON Body payload.")]
+        [Parameter(Position = 1, Mandatory = $false, HelpMessage = "Specify the JSON Body payload.")]
         [System.String]$Body
     )
 
@@ -76,9 +169,37 @@ function global:Invoke-PlatformAPI
 ###########
 function global:Query-VaultRedRock
 {
+    <#
+    .SYNOPSIS
+    This function makes a direct SQL query to the SQL tables of the connected Delinea PAS tenant.
+
+    .DESCRIPTION
+    This function makes a direct SQL query to the SQL tables of the connected Delinea PAS tenant. Most SELECT SQL queries statements will work to query data.
+
+    .PARAMETER SQLQuery
+    The SQL Query to run. Most SELECT queries will work, as well as most JOIN, CASE, WHERE, AS, COUNT, etc statements.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PSCustomObject with the requested data.
+
+    .EXAMPLE
+    C:\PS> Query-VaultRedRock -SQLQuery "SELECT * FROM Sets"
+    This query will return all rows and all property fields from the Sets table.
+
+    .EXAMPLE
+    C:\PS> Query-VaultRedRock -SQLQuery "SELECT COUNT(*) FROM Servers"
+    This query will return a count of all the rows in the Servers table.
+
+    .EXAMPLE
+    C:\PS> Query-VaultRedRock -SQLQuery "SELECT Name,User AS AccountName FROM VaultAccount LIMIT 10"
+    This query will return the Name property and the User property (renamed AS AccountName) from the VaultAccount table and limiting those results to 10 rows.
+    #>
     param
     (
-		[Parameter(Mandatory = $true, HelpMessage = "The SQL query to make.")]
+		[Parameter(Position = 0, Mandatory = $true, HelpMessage = "The SQL query to execute.")]
 		[System.String]$SQLQuery
     )
 
@@ -114,9 +235,33 @@ function global:Query-VaultRedRock
 ###########
 function global:Set-PlatformConnection
 {
+    <#
+    .SYNOPSIS
+    This function will change the currently connected tenant to another actively connected tenant.
+
+    .DESCRIPTION
+    This function will change the currently connected tenant to another actively connected tenant. This function is only needed if you are working with two or
+    more PAS tenants. For example, if you are working on mycompanydev.my.centrify.net and also on mycompanyprod.my.centrify.net, this function can help
+    you switch connections between the two without having to reauthenticate to each one during the switch. Each connection must still initially be completed
+    once via the Connect-DelineaPlatform function.
+
+    .PARAMETER PodFqdn
+    Specify the tenant's URL to switch to. For example, mycompany.my.centrify.net
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This script only returns $true on a successful switch, or $false if the specified PodFqdn was not found.
+
+    .EXAMPLE
+    C:\PS> Set-PlatformConnection -PodFqdn mycompanyprod.my.centrify.net
+    This will switch your existing $PlatformConnection and $SessionInformation variables to the specified tenant. In this
+    example, the login for mycopanyprod.my.centrify.net must have already been completed via the Connect-DelineaPlatform cmdlet.
+    #>
     param
     (
-		[Parameter(Mandatory = $true, HelpMessage = "The PodFqdn to switch to for authentication.")]
+		[Parameter(Position = 0, Mandatory = $true, HelpMessage = "The PodFqdn to switch to for authentication.")]
 		[System.String]$PodFqdn
     )
 
@@ -141,6 +286,40 @@ function global:Set-PlatformConnection
 ###########
 function global:Search-PlatformDirectory
 {
+    <#
+    .SYNOPSIS
+    This function will retrieve the UUID of the specified principal from all reachable tenant directories.
+
+    .DESCRIPTION
+    This function will retrieve the UUID of the specified principal from all reachable tenant directories. The searches made
+    by principal is a like search, so any matching query will be returned. For example, searching for -Role "System" will
+    return any Role with "System" in the name.
+
+    .PARAMETER User
+    Search for a user by their User Principal Name. For example, "person@domain.com"
+
+    .PARAMETER Group
+    Search for a group by their Group and domain. For example, "WidgetAdmins@domain.com"
+
+    .PARAMETER Role
+    Search for a role by the Role name. For example, "System"
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PSCustomObject with the Name of the principal and the UUID.
+
+    .EXAMPLE
+    C:\PS> Search-PlatformDirectory -User "person@domain.com"
+    Searches all reachable tenant directories (AD, Federated, etc.) to find a person@domain.com and if successful, return the 
+    tenant's UUID for this user.
+
+    .EXAMPLE
+    C:\PS> Search-PlatformDirectory -Group "WidgetAdmins@domain.com"
+    Searches all reachable tenant directories (AD, Federated, etc.) to find the group WidgetAdmins@domain.com and if successful,
+    return the tenant's UUID for this group.
+    #>
     param
     (
 		[Parameter(Mandatory = $true, HelpMessage = "Specify the User to find from DirectoryServices.",ParameterSetName = "User")]
@@ -198,6 +377,39 @@ function global:Search-PlatformDirectory
 ###########
 function global:Get-PlatformPrincipal
 {
+    <#
+    .SYNOPSIS
+    This function will retrieve the UUID of the specified principal from all reachable tenant directories by exact match.
+
+    .DESCRIPTION
+    This function will retrieve the UUID of the specified principal from all reachable tenant directories by exact match. This
+    function will only principals that exactly match by name of what is searched, no partial searches.
+
+    .PARAMETER User
+    Search for a user by their User Principal Name. For example, "person@domain.com"
+
+    .PARAMETER Group
+    Search for a group by their Group and domain. For example, "WidgetAdmins@domain.com"
+
+    .PARAMETER Role
+    Search for a role by the Role name. For example, "System"
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PSCustomObject with the requested data.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformPrincipal -User "person@domain.com"
+    Searches all reachable tenant directories (AD, Federated, etc.) to find a person@domain.com and if successful, return the 
+    tenant's UUID for this user.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformPrincipal -Group "WidgetAdmins@domain.com"
+    Searches all reachable tenant directories (AD, Federated, etc.) to find the group WidgetAdmins@domain.com and if successful,
+    return the tenant's UUID for this group.
+    #>
     param
     (
 		[Parameter(Mandatory = $true, HelpMessage = "Specify the User to find from DirectoryServices.",ParameterSetName = "User")]
@@ -255,6 +467,56 @@ function global:Get-PlatformPrincipal
 ###########
 function global:Get-PlatformSecret
 {
+    <#
+    .SYNOPSIS
+    Gets a Secret object from the Delinea Platform.
+
+    .DESCRIPTION
+    Gets a Secret object from the Delinea Platform. This returns a PlatformSecret class object containing properties about
+    the Secret object, and methods to potentially retreive the Secret contents as well. By default, Get-PlatformSecret without
+    any parameters will get all Secret objects in the Platform. 
+    
+    The additional methods are the following:
+
+    .RetrieveSecret()
+      - For Text Secrets, this will retreive the contents of the Text Secret and store it in the SecretText property.
+      - For File Secrets, this will prepare the File Download URL to be used with the .ExportSecret() method.
+
+    .ExportSecret()
+      - For Text Secrets, this will export the contents of the SecretText property as a text file into the ParentPath directory.
+      - For File Secrets, this will download the file from the Platform into the ParentPath directory.
+
+    .PARAMETER Name
+    Get a Platform Secret by it's Secret Name.
+
+    .PARAMETER Uuid
+    Get a Platform Secret by it's UUID.
+
+    .PARAMETER Limit
+    Limits the number of potential Secret objects returned.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PlatformSecret class object.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSecret
+    Gets all Secret objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSecret -Limit 10
+    Gets 10 Secret objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSecret -Name "License Keys"
+    Gets all Secret objects with the Secret Name "License Keys".
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSecret -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    Get a Secret object with the specified UUID.
+    #>
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
@@ -262,7 +524,10 @@ function global:Get-PlatformSecret
         [System.String]$Name,
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
-        [System.String]$Uuid
+        [System.String]$Uuid,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Limits the number of results.")]
+        [System.Int32]$Limit
     )
 
     # verifying an active platform connection
@@ -288,6 +553,9 @@ function global:Get-PlatformSecret
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
 
+    # if Limit was used, append it to the query
+    if ($PSBoundParameters.ContainsKey("Limit")) { $query += (" LIMIT {0}" -f $Limit) }
+
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
     # make the query
@@ -302,6 +570,7 @@ function global:Get-PlatformSecret
         # for each secret in the query
         foreach ($secret in $sqlquery)
         {
+            if ($secret -eq $null) { continue }
             # Counter for the secret objects
             $p++; Write-Progress -Activity "Processing Secrets into Objects" -Status ("{0} out of {1} Complete" -f $p,$sqlquery.Count) -PercentComplete ($p/($sqlquery | Measure-Object | Select-Object -ExpandProperty Count)*100)
             
@@ -323,6 +592,52 @@ function global:Get-PlatformSecret
 ###########
 function global:Get-PlatformSet
 {
+    <#
+    .SYNOPSIS
+    Gets a Set object from the Delinea Platform.
+
+    .DESCRIPTION
+    Gets a Set object from the Delinea Platform. This returns a PlatformSet class object containing properties about
+    the Set object. By default, Get-PlatformSet without any parameters will get all Set objects in the Platform. 
+
+    .PARAMETER Type
+    Gets only Sets of this type. Currently only "System","Database","Account", or "Secret" is supported.
+
+    .PARAMETER Name
+    Gets only Sets with this name.
+
+    .PARAMETER Uuid
+    Gets only Sets with this UUID.
+
+    .PARAMETER Limit
+    Limits the number of potential Set objects returned.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PlatformSet class object.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSet
+    Gets all Set objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSet -Limit 10
+    Gets 10 Set objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSet -Name "Widget Systems"
+    Gets all Secret objects with the Set Name "Widget Systems".
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSet -Type "Account"
+    Get all Account Sets from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSecret -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    Get a Secret object with the specified UUID.
+    #>
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
@@ -336,7 +651,10 @@ function global:Get-PlatformSet
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Set to search.",ParameterSetName = "Uuid")]
         [Parameter(Mandatory = $false, HelpMessage = "The name of the Set to search.", ParameterSetName = "Type")]
-        [System.String]$Uuid
+        [System.String]$Uuid,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Limits the number of results.")]
+        [System.Int32]$Limit
     )
 
     # verifying an active platform connection
@@ -375,6 +693,9 @@ function global:Get-PlatformSet
         # join them together with " AND " and append it to the query
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    # if Limit was used, append it to the query
+    if ($PSBoundParameters.ContainsKey("Limit")) { $query += (" LIMIT {0}" -f $Limit) }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
@@ -425,6 +746,81 @@ function global:Get-PlatformSet
 ###########
 function global:Get-PlatformAccount
 {
+    <#
+    .SYNOPSIS
+    Gets an Account object from the Delinea Platform.
+
+    .DESCRIPTION
+    Gets an Account object from the Delinea Platform. This returns a PlatformAccount class object containing properties about
+    the Account object. By default, Get-PlatformAccount without any parameters will get all Account objects in the Platform. 
+    In addition, the PlatformAccount class also contains methods to help interact with that Account.
+
+    The additional methods are the following:
+
+    .CheckInPassword()
+      - Checks in a password that has been checked out by the CheckOutPassword() method.
+    
+    .CheckOutPassword()
+      - Checks out the password to this Account.
+    
+    .ManageAccount()
+      - Sets this Account to be managed by the Platform.
+
+    .UnmanageAccount()
+      - Sets this Account to be un-managed by the Platform.
+
+    .UpdatePassword([System.String]$newpassword)
+      - Updates the password to this Account.
+    
+    .VerifyPassword()
+      - Verifies if this password on this Account is correct.
+
+    .PARAMETER Type
+    Gets only Accounts of this type. Currently only "Local","Domain","Database", or "Cloud" is supported.
+
+    .PARAMETER SourceName
+    Gets only Accounts with the name of the Parent object that hosts this account. For local accounts, this would
+    be the hostname of the system the account exists on. For domain accounts, this is the name of the domain.
+
+    .PARAMETER UserName
+    Gets only Accounts with this as the username.
+
+    .PARAMETER Uuid
+    Gets only Accounts with this UUID.
+
+    .PARAMETER Limit
+    Limits the number of potential Account objects returned.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PlatformAccount class object.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformAccount
+    Gets all Account objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformAccount -Limit 10
+    Gets 10 Account objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformAccount -Type Domain
+    Get all domain-based Accounts.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformAccount -Username "root"
+    Gets all Account objects with the username, "root".
+
+    .EXAMPLE
+    C:\PS> Get-PlatformAccount -SourceName "LINUXSERVER01.DOMAIN.COM"
+    Get all Account objects who's source (parent) object is LINUXSERVER01.DOMAIN.COM.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformAccount -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    Get an Account object with the specified UUID.
+    #>
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
@@ -445,7 +841,7 @@ function global:Get-PlatformAccount
         [System.String]$Uuid,
 
         [Parameter(Mandatory = $false, HelpMessage = "A limit on number of objects to query.")]
-        [System.Int32]$Limit = 0
+        [System.Int32]$Limit
     )
 
     # verifying an active platform connection
@@ -483,11 +879,8 @@ function global:Get-PlatformAccount
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
 
-    # if $Limit was used
-    if ($Limit -gt 0)
-    {
-        $query = $query + (" LIMIT {0}" -f $Limit)
-    }
+    # if Limit was used, append it to the query
+    if ($PSBoundParameters.ContainsKey("Limit")) { $query += (" LIMIT {0}" -f $Limit) }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
@@ -537,6 +930,22 @@ function global:Get-PlatformAccount
 ###########
 function global:Verify-PlatformCredentials
 {
+    <#
+    .SYNOPSIS
+    Verifies an Account object's password as known by the Platform.
+
+    .DESCRIPTION
+    This function will verify if the specified account's password, as it is known by the Platform is correct.
+    This will cause the Platform to reach out to the Account's parent object in an attempt to validate the password.
+    Will return $true if it is correct, or $false if it is incorrect or cannot validate for any reason.
+
+    .PARAMETER Uuid
+    The Uuid of the Account to validate.
+
+    .EXAMPLE
+    C:\PS> Verify-PlatformCredentials -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    Verifies the password of the Account with the spcified Uuid.
+    #>
     param
     (
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to check.",ParameterSetName = "Uuid")]
@@ -567,6 +976,52 @@ function global:Verify-PlatformCredentials
 ###########
 function global:Get-PlatformVault
 {
+    <#
+    .SYNOPSIS
+    Gets a Vault object from the Delinea Platform.
+
+    .DESCRIPTION
+    Gets a Vault object from the Delinea Platform. This returns a PlatformVault class object containing properties about
+    the Vault object. By default, Get-PlatformVault without any parameters will get all Vault objects in the Platform. 
+
+    .PARAMETER Type
+    Gets only Vaults of this type. Currently only "SecretServer" is supported.
+
+    .PARAMETER VaultName
+    Gets only Vaults with this name.
+
+    .PARAMETER Uuid
+    Gets only Vaults with this UUID.
+
+    .PARAMETER Limit
+    Limits the number of potential Vault objects returned.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PlatformVault class object.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformVault
+    Gets all Vault objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformVault -Limit 10
+    Gets 10 Vault objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformVault -Name "Company SecretServer"
+    Gets all Vault objects with the Name "Company SecretServer".
+
+    .EXAMPLE
+    C:\PS> Get-PlatformVault -Type "SecretServer"
+    Get all Secret Server Vault objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformVault -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    Get all Vault objects with the specified UUID.
+    #>
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
@@ -580,7 +1035,10 @@ function global:Get-PlatformVault
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Vault to search.",ParameterSetName = "Uuid")]
         [Parameter(Mandatory = $false, HelpMessage = "The name of the Vault to search.", ParameterSetName = "Type")]
-        [System.String]$Uuid
+        [System.String]$Uuid,
+
+        [Parameter(Mandatory = $false, HelpMessage = "A limit on number of objects to query.")]
+        [System.Int32]$Limit
     )
 
     # verifying an active platform connection
@@ -613,6 +1071,9 @@ function global:Get-PlatformVault
         # join them together with " AND " and append it to the query
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    # if Limit was used, append it to the query
+    if ($PSBoundParameters.ContainsKey("Limit")) { $query += (" LIMIT {0}" -f $Limit) }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
@@ -651,6 +1112,58 @@ function global:Get-PlatformVault
 ###########
 function global:Get-PlatformSystem
 {
+    <#
+    .SYNOPSIS
+    Gets a System object from the Delinea Platform.
+
+    .DESCRIPTION
+    Gets a System object from the Delinea Platform. This returns a PlatformSystem class object containing properties about
+    the System object. By default, Get-PlatformSystem without any parameters will get all System objects in the Platform. 
+    In addition, the PlatformSystem class also contains methods to help interact with that System.
+
+    The additional methods are the following:
+
+    .getAccounts()
+      - Retrieves any local Account objects that are registered to this System.
+
+    .PARAMETER Name
+    Gets only Systems with this name.
+
+    .PARAMETER FQDN
+    Gets only Systems with this FQDN.
+
+    .PARAMETER Uuid
+    Gets only Systems with this UUID.
+
+    .PARAMETER Limit
+    Limits the number of potential Set objects returned.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PlatformSystem class object.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSystem
+    Gets all System objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSystem -Limit 10
+    Gets 10 System objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSystem -Name "CFYADMIN"
+    Gets all System objects with the Name "CFYADMIN".
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSystem -FQDN "LINUX01.DOMAIN.COM"
+    Gets all System objects with the FQDN "LINUX01.DOMAIN.COM"
+
+    .EXAMPLE
+    C:\PS> Get-PlatformSecret -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    Get a Secret object with the specified UUID.
+    #>
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
@@ -664,7 +1177,7 @@ function global:Get-PlatformSystem
         [System.String]$Uuid,
 
         [Parameter(Mandatory = $false, HelpMessage = "A limit on number of objects to query.")]
-        [System.Int32]$Limit = 0
+        [System.Int32]$Limit
     )
 
     # verifying an active platform connection
@@ -690,11 +1203,8 @@ function global:Get-PlatformSystem
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
 
-    # if $Limit was used
-    if ($Limit -gt 0)
-    {
-        $query = $query + (" LIMIT {0}" -f $Limit)
-    }
+    # if Limit was used, append it to the query
+    if ($PSBoundParameters.ContainsKey("Limit")) { $query += (" LIMIT {0}" -f $Limit) }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
@@ -736,11 +1246,46 @@ function global:Get-PlatformSystem
 ###########
 function global:Get-PlatformRole
 {
+    <#
+    .SYNOPSIS
+    Gets a Role object from the Delinea Platform.
+
+    .DESCRIPTION
+    Gets a Role object from the Delinea Platform. This returns a PlatformRole class object containing properties about
+    the Role object. By default, Get-PlatformRole without any parameters will get all Role objects in the Platform. 
+
+    .PARAMETER Name
+    Gets only Roles with this name.
+
+    .PARAMETER Limit
+    Limits the number of potential Role objects returned.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs a PlatformRole class object.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformRole
+    Gets all Role objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformRole -Limit 10
+    Gets 10 Role objects from the Delinea Platform.
+
+    .EXAMPLE
+    C:\PS> Get-PlatformRole -Name "Infrastructure Team"
+    Gets all Role objects with the Name "Infrastructure Team".
+    #>
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Role to search.", ParameterSetName = "Name")]
-        [System.String]$Name
+        [System.String]$Name,
+
+        [Parameter(Mandatory = $false, HelpMessage = "A limit on number of objects to query.")]
+        [System.Int32]$Limit
     )
 
     # verify an active platform connection
@@ -764,6 +1309,9 @@ function global:Get-PlatformRole
         # join them together with " AND " and append it to the query
         $query += ($extras -join " AND ")
     }# if ($PSCmdlet.ParameterSetName -ne "All")
+
+    # if Limit was used, append it to the query
+    if ($PSBoundParameters.ContainsKey("Limit")) { $query += (" LIMIT {0}" -f $Limit) }
 
     Write-Verbose ("SQLQuery: [{0}]" -f $query)
 
@@ -796,6 +1344,52 @@ function global:Get-PlatformRole
     #return $queries
     return $queries
 }# function global:Get-PlatformRole
+#endregion
+###########
+
+###########
+#region ### global:Get-PlatformMetrics # Gets counts of objects in the tenant
+###########
+function global:Get-PlatformMetrics
+{
+
+    # Servers
+    Write-Host ("Getting Server metrics ... ") -NoNewline
+    $Servers = Query-VaultRedRock -SQLQuery "SELECT ComputerClass, ComputerClassDisplayName, FQDN, HealthStatus, HealthStatusError, ID, LastHealthCheck, LastState, Name, OperatingSystem FROM Server"
+    Write-Host ("Done!") -ForegroundColor Green
+
+    # Accounts
+    Write-Host ("Getting Account metrics ... ") -NoNewline
+    # This is written as it is because the parent object type was never contined in a single column
+    $Accounts = Query-VaultRedRock -SQLQuery "SELECT (CASE WHEN DomainID != '' THEN DomainID WHEN Host != '' THEN Host WHEN DatabaseID != '' THEN DatabaseID WHEN DeviceID != '' THEN DeviceID WHEN KmipId != '' THEN KmipId WHEN VaultId != '' THEN VaultId WHEN VaultSecretId != '' THEN VaultSecretId ELSE 'Other' END) AS ParentID, (CASE WHEN DomainID != '' THEN 'DomainID' WHEN Host != '' THEN 'Host' WHEN DatabaseID != '' THEN 'DatabaseID' WHEN DeviceID != '' THEN 'DeviceID' WHEN KmipId != '' THEN 'KmipId' WHEN VaultId != '' THEN 'VaultId' WHEN VaultSecretId != '' THEN 'VaultSecretId' ELSE 'Other' END) AS ParentType,FQDN,HealthError,Healthy,ID,LastChange,LastHealthCheck,MissingPassword,Name,NeedsPasswordReset,User,UserDisplayName FROM VaultAccount"
+    Write-Host ("Done!") -ForegroundColor Green
+
+    # Secrets
+    Write-Host ("Getting Secret metrics ... ") -NoNewline
+    $Secrets = Query-VaultRedRock -SQLQuery "SELECT * FROM DataVault"
+    Write-Host ("Done!") -ForegroundColor Green
+
+    # Sets
+    Write-Host ("Getting Set metrics ... ") -NoNewline
+    $Sets = Query-VaultRedRock -SQLQuery "SELECT * FROM Sets"
+    Write-Host ("Done!") -ForegroundColor Green
+
+    # Domains
+
+    # WebApps
+
+    # Roles
+
+    # Policies
+
+
+
+
+    $metrics = [PlatformMetric]::new($Servers,$Accounts)
+
+    return $metrics
+
+}# function global:Get-PlatformMetrics
 #endregion
 ###########
 
@@ -1810,6 +2404,19 @@ function global:Prepare-ZoneRoles
 #######################################
 #region ### CLASSES ###################
 #######################################
+
+# class for holding Platform metrics
+class PlatformMetric
+{
+    [PSCustomObject]$Servers
+    [PSCustomObject]$Accounts
+    
+    PlatformMetric($s,$a)
+    {
+        $this.Servers = $s
+        $this.Accounts = $a
+    }
+}
 
 # class for holding Permission information including converting it to
 # a human readable format
