@@ -49,3 +49,4 @@ Each major function also has Help documentation built into it. For example, use 
 - Get-PlatformRole - Allows you to get a Role object from the Delinea Platform.
 - Verify-PlatformCredentials - Verifies if the Account object (specified by UUID) has the correct credentials.
 - Verify-PlatformConnection - verifies if you have a valid connection to a Delinea Platform tenant.
+- Get-PlatformMetrics - Gets metrics and object count from the Delinea Platform tenant.
