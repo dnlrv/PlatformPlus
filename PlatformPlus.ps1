@@ -1352,6 +1352,10 @@ function global:Get-PlatformRole
 ###########
 function global:Get-PlatformMetrics
 {
+    # Sysinfo version
+    Write-Host ("Getting Version metrics ... ") -NoNewline
+    $Version = Invoke-PlatformAPI -APICall Sysinfo/Version
+    Write-Host ("Done!") -ForegroundColor Green
 
     # Servers
     Write-Host ("Getting Server metrics ... ") -NoNewline
@@ -1366,28 +1370,60 @@ function global:Get-PlatformMetrics
 
     # Secrets
     Write-Host ("Getting Secret metrics ... ") -NoNewline
-    $Secrets = Query-VaultRedRock -SQLQuery "SELECT * FROM DataVault"
+    $Secrets = Query-VaultRedRock -SQLQuery "SELECT SecretFileName,WhenCreated,SecretFileSize,ID,ParentPath,FolderId,Description,SecretName,Type FROM DataVault"
     Write-Host ("Done!") -ForegroundColor Green
 
     # Sets
     Write-Host ("Getting Set metrics ... ") -NoNewline
-    $Sets = Query-VaultRedRock -SQLQuery "SELECT * FROM Sets"
+    $Sets = Query-VaultRedRock -SQLQuery "SELECT ObjectType,Name,WhenCreated,ID,ParentPath,CollectionType,Description FROM Sets"
     Write-Host ("Done!") -ForegroundColor Green
 
     # Domains
+    Write-Host ("Getting Domain metrics ... ") -NoNewline
+    $Domains = Query-VaultRedRock -SQLQuery "SELECT ID,LastHealthCheck,LastState,Name FROM VaultDomain"
+    Write-Host ("Done!") -ForegroundColor Green
+
+    # Privilege Elevation Commands
+    Write-Host ("Getting Privileged Elevation Command metrics ... ") -NoNewline
+    $Commands = Query-VaultRedRock -SQLQuery "SELECT Name,DisplayName,ID,CommandPattern,RunAsUser,RunAsGroup,Description FROM PrivilegeElevationCommand"
+    Write-Host ("Done!") -ForegroundColor Green
 
     # WebApps
+    Write-Host ("Getting Applications metrics ... ") -NoNewline
+    $Apps = Query-VaultRedRock -SQLQuery "SELECT Name,Category,DisplayName,ID,Description,AppType,State FROM Application"
+    Write-Host ("Done!") -ForegroundColor Green
+
+    # SSH Keys
+    Write-Host ("Getting SSH Key metrics ... ") -NoNewline
+    $SSHKeys = Query-VaultRedRock -SQLQuery "SELECT Comment,Created,CreatedBy,ID,IsManaged,LastUpdated,KeyType,Name,Revision,State FROM SSHKeys"
+    Write-Host ("Done!") -ForegroundColor Green
+
+    # CentrifyClients
+    Write-Host ("Getting Centrify Client metrics ... ") -NoNewline
+    $CentrifyClients = Query-VaultRedRock -SQLQuery "SELECT ID,JoinDate,LastUpdate,Name,ResourceID,ResourceName FROM CentrifyClients"
+    Write-Host ("Done!") -ForegroundColor Green
 
     # Roles
+    Write-Host ("Getting Role metrics ... ") -NoNewline
+    $Roles = Query-VaultRedRock -SQLQuery "SELECT Name,ID,Description FROM Role"
+    Write-Host ("Done!") -ForegroundColor Green
 
-    # Policies
+    # Connectors
+    Write-Host ("Getting Connector metrics ... ") -NoNewline
+    $Connectors = Query-VaultRedRock -SQLQuery "SELECT DnsHostName,LastPingAttempted,ID,Version FROM Proxy"
+    Write-Host ("Done!") -ForegroundColor Green
 
+    # CloudProviders TOADD
 
+    # Policies TOADD
 
+    # creating the PlatformData object
+    $data = [PlatformData]::new($Servers,$Accounts,$Secrets,$Sets,$Domains,$Commands,$Apps,$CentrifyClients,$Roles,$Connectors)
 
-    $metrics = [PlatformMetric]::new($Servers,$Accounts)
-
-    return $metrics
+    # creating the PlatformMetric object
+    $metric = [PlatformMetric]::new($data,$Version)
+    
+    return $metric
 
 }# function global:Get-PlatformMetrics
 #endregion
@@ -2405,18 +2441,114 @@ function global:Prepare-ZoneRoles
 #region ### CLASSES ###################
 #######################################
 
-# class for holding Platform metrics
+#
 class PlatformMetric
+{
+    [PSCustomObject]$ServersCountTotal
+    [PSCustomObject]$AccountsCountTotal
+    [PSCustomObject]$SecretsCountTotal
+    [PSCustomObject]$SetsCountTotal
+    [PSCustomObject]$DomainCountTotal
+    [PSCustomObject]$CommandCountTotal
+    [PSCustomObject]$AppCountTotal
+    [PSCustomObject]$CentrifyClientCountTotal
+    [PSCustomObject]$RoleCountTotal
+    [PSCustomObject]$ConnectorCountTotal
+    [PlatformData]$PlatformData
+    [PSCustomObject]$Version
+
+    PlatformMetric($pd,$v)
+    {
+        $this.PlatformData = $pd
+        $this.Version = $v
+
+        # server metrics
+        $this.addCount("OperatingSystem","Servers","ServerCountBy_OS")
+        $this.addCount("ComputerClass","Servers","ServerCountBy_ComputerClass")
+        $this.addCount("LastState","Servers","ServerCountBy_LastState")
+        $this.addCount("HealthStatus","Servers","ServerCountBy_HealthStatus")
+        $this.ServersCountTotal = $this.PlatformData.Servers.Count
+
+        # account metrics
+        $this.addCount("Healthy","Accounts","AccountCountBy_Health")
+        $this.AccountsCountTotal = $this.PlatformData.Accounts.Count
+        
+        # secret metrics
+        $this.addCount("Type","Secrets","SecretsCountBy_Type")
+        $this.SecretsCountTotal = $this.PlatformData.Secrets.Count
+
+        # set metrics
+        $this.addCount("ObjectType","Sets","SetsCountBy_ObjectType")
+        $this.addCount("CollectionType","Sets","SetsCountBy_CollectionType")
+        $this.SetsCountTotal = $this.PlatformData.Sets.Count
+
+        # domain metrics
+        $this.addCount("LastState","Domains","DomainsCountBy_LastState")
+        $this.DomainCountTotal = $this.PlatformData.Sets.Count
+
+        # command metrics
+        $this.CommandCountTotal = $this.PlatformData.Commands.Count
+
+        # app metrics
+        $this.addCount("State","Apps","AppsCountBy_State")
+        $this.addCount("AppType","Apps","AppsCountBy_AppType")
+        $this.addCount("Category","Apps","AppsCountBy_Category")
+        $this.AppCountTotal = $this.PlatformData.Apps.Count
+
+        # centrifyclient metrics
+        $this.CentrifyClientCountTotal = $this.PlatformData.CentrifyClients.Count
+
+        # role metrics
+        $this.RoleCountTotal = $this.PlatformData.Roles.Count
+
+        # connector metrics
+        $this.addCount("Version","Connectors","ConnectorsCountBy_Version")
+        $this.ConnectorCountTotal = $this.PlatformData.Connectors.Count
+    }
+
+    addCount($property, $obj, $counttext)
+    {
+        # count by property
+        foreach ($i in ($this.PlatformData.$obj | Select-Object -ExpandProperty $property -Unique))
+        {
+            $this | Add-Member -MemberType NoteProperty -Name ("{0}_{1}" -f $counttext, ($i -replace " ","_")) -Value ($this.PlatformData.$obj | Where-Object {$_.$property -eq $i} | Measure-Object | Select-Object -ExpandProperty Count)
+        }
+    }# addCount($property, $obj, $counttext)
+
+    [PSCustomObject]printCount()
+    {
+        return $this | Select-Object -Property * -ExcludeProperty PlatformData,Version
+    }
+}# class PlatformMetric
+
+# class for holding Platform metrics
+class PlatformData
 {
     [PSCustomObject]$Servers
     [PSCustomObject]$Accounts
+    [PSCustomObject]$Secrets
+    [PSCustomObject]$Sets
+    [PSCustomObject]$Domains
+    [PSCustomObject]$Commands
+    [PSCustomObject]$Apps
+    [PSCustomObject]$CentrifyClients
+    [PSCustomObject]$Roles
+    [PSCustomObject]$Connectors
     
-    PlatformMetric($s,$a)
+    PlatformData($s,$a,$sec,$set,$d,$c,$ap,$cc,$r,$con)
     {
         $this.Servers = $s
         $this.Accounts = $a
-    }
-}
+        $this.Secrets = $sec
+        $this.Sets = $set
+        $this.Domains = $d
+        $this.Commands = $c
+        $this.Apps = $ap
+        $this.CentrifyClients = $cc
+        $this.Roles = $r
+        $this.Connectors = $con
+    }# PlatformData($s,$a,$sec,$set,$d,$c,$ap,$cc,$r,$con)
+}# class PlatformData
 
 # class for holding Permission information including converting it to
 # a human readable format
