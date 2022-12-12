@@ -2014,6 +2014,7 @@ function global:Convert-PermissionToString
         "Database|VaultDatabase"
                            { $AceHash = @{ GrantDatabaseAccount = 1; ViewDatabaseAccount = 4; EditDatabaseAccount = 8; DeleteDatabaseAccount = 64;
                                            CheckoutDatabaseAccount = 65536; UpdatePasswordDatabaseAccount = 131072; RotateDatabaseAccount = 524288}; break }
+        "Subscriptions"    { $AceHash = @{ Grant = 1; View = 4; Edit = 8; Delete = 64} ; break } #Grant,View,Edit,Delete
     }# switch -Regex ($Type)
 
     # for each bit (sorted) in our specified permission hash
