@@ -486,11 +486,17 @@ function global:Get-PlatformSecret
       - For Text Secrets, this will export the contents of the SecretText property as a text file into the ParentPath directory.
       - For File Secrets, this will download the file from the Platform into the ParentPath directory.
 
+    If the directory or file does not exist during ExportSecret(), the directory and file will be created. If the file
+    already exists, then the file will be renamed and appended with a random 8 character string to avoid file name conflicts.
+    
     .PARAMETER Name
     Get a Platform Secret by it's Secret Name.
 
     .PARAMETER Uuid
     Get a Platform Secret by it's UUID.
+
+    .PARAMETER Type
+    Get a Platform Secret by it's Type, either File or Text.
 
     .PARAMETER Limit
     Limits the number of potential Secret objects returned.
@@ -514,6 +520,10 @@ function global:Get-PlatformSecret
     Gets all Secret objects with the Secret Name "License Keys".
 
     .EXAMPLE
+    C:\PS> Get-PlatformSecret -Type File
+    Gets all File Secret objects.
+
+    .EXAMPLE
     C:\PS> Get-PlatformSecret -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     Get a Secret object with the specified UUID.
     #>
@@ -525,6 +535,10 @@ function global:Get-PlatformSecret
 
         [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the secret to search.",ParameterSetName = "Uuid")]
         [System.String]$Uuid,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The type of the secret to search.",ParameterSetName = "Type")]
+        [ValidateSet("Text","File")]
+        [System.String]$Type,
 
         [Parameter(Mandatory = $false, HelpMessage = "Limits the number of results.")]
         [System.Int32]$Limit
@@ -548,6 +562,7 @@ function global:Get-PlatformSecret
         # setting up the extra conditionals
         if ($PSBoundParameters.ContainsKey("Name")) { $extras.Add(("SecretName = '{0}'" -f $Name)) | Out-Null }
         if ($PSBoundParameters.ContainsKey("Uuid")) { $extras.Add(("ID = '{0}'"         -f $Uuid)) | Out-Null }
+        if ($PSBoundParameters.ContainsKey("Type")) { $extras.ADD(("Type = '{0}'"       -f $Type)) | Out-Null }
 
         # join them together with " AND " and append it to the query
         $query += ($extras -join " AND ")
@@ -1161,7 +1176,7 @@ function global:Get-PlatformSystem
     Gets all System objects with the FQDN "LINUX01.DOMAIN.COM"
 
     .EXAMPLE
-    C:\PS> Get-PlatformSecret -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    C:\PS> Get-PlatformSystem -Uuid "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     Get a Secret object with the specified UUID.
     #>
     [CmdletBinding(DefaultParameterSetName="All")]
@@ -2686,18 +2701,46 @@ class PlatformSecret
     # method to export secret content to files
     ExportSecret()
     {
+        # if the directory doesn't exist and it is not the Root PAS directory
+        if ((-Not (Test-Path -Path $this.ParentPath)) -and $this.ParentPath -ne ".")
+        {
+            # create directory
+            New-Item -Path $this.ParentPath -ItemType Directory | Out-Null
+        }
+
         Switch ($this.Type)
         {
             "Text" # Text secrets will be created as a .txt file
             {
-                $this.SecretText | Out-File -FilePath ("{0}\{1}.txt" -f $this.ParentPath, $this.Name)
+                # if the File does not already exists
+                if (-Not (Test-Path -Path ("{0}\{1}" -f $this.ParentPath, $this.Name)))
+                {
+                    # create it
+                    $this.SecretText | Out-File -FilePath ("{0}\{1}.txt" -f $this.ParentPath, $this.Name)
+                }
+                
                 break
-            }
+            }# "Text" # Text secrets will be created as a .txt file
             "File" # File secrets will be created as their current file name
             {
-                Invoke-RestMethod -Method Get -Uri $this.SecretFilePath -OutFile ("{0}\{1}" -f $this.ParentPath, $this.SecretFileName) @global:SessionInformation
+                $filename      = $this.SecretFileName.Split(".")[0]
+                $fileextension = $this.SecretFileName.Split(".")[1]
+
+                # if the file already exists
+                if ((Test-Path -Path ("{0}\{1}" -f $this.ParentPath, $this.SecretFileName)))
+                {
+                    # append the filename 
+                    $fullfilename = ("{0}_{1}.{2}" -f $filename, (-join ((65..90) + (97..122) | Get-Random -Count 8 | ForEach-Object{[char]$_})).ToUpper(), $fileextension)
+                }
+                else
+                {
+                    $fullfilename = $this.SecretFileName
+                }
+
+                # create the file
+                Invoke-RestMethod -Method Get -Uri $this.SecretFilePath -OutFile ("{0}\{1}" -f $this.ParentPath, $fullfilename) @global:SessionInformation
                 break
-            }
+            }# "File" # File secrets will be created as their current file name
         }# Switch ($this.Type)
     }# ExportSecret()
 }# class PlatformSecret
@@ -3309,3 +3352,13 @@ class PlatformRowAceException : System.Exception
 
 # initializing a List[PlatformConnection] if it is empty or null
 if ($global:PlatformConnections -eq $null) {$global:PlatformConnections = New-Object System.Collections.Generic.List[PlatformConnection]}
+
+# if the script is local, save it as a variable (used in Get-PlatformObjects)
+if (Test-Path -Path '.\PlatformPlus.ps1')
+{
+    $global:PlatformPlusScript = Get-Content .\PlatformPlus.ps1 -Raw
+}
+else # otherwise get the contents from the github repo
+{
+    $global:PlatformPlusScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/DelineaPS/PlatformPlus/main/PlatformPlus.ps1').Content
+}
