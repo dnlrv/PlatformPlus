@@ -208,9 +208,9 @@ function global:Query-VaultRedRock
 
     # Set Arguments
 	$Arguments = @{}
-	$Arguments.PageNumber 	= 1
-	$Arguments.PageSize 	= 10000
-	$Arguments.Limit	 	= 10000
+	#$Arguments.PageNumber 	= 1     
+	#$Arguments.PageSize 	= 10000
+	#$Arguments.Limit	 	= 10000 # removing this as it caps results to 10k
 	$Arguments.SortBy	 	= ""
 	$Arguments.Direction 	= "False"
 	$Arguments.Caching		= 0
@@ -2535,6 +2535,29 @@ class PlatformMetric
     {
         return $this | Select-Object -Property * -ExcludeProperty PlatformData,Version
     }
+
+    [System.Double]getTotalFileSize()
+    {
+        $filesecrets = $this.PlatformData.Secrets | Where-Object {$_.Type -eq "File"}
+
+        [System.Double]$filesizetotal = 0
+
+        foreach ($filesecret in $filesecrets)
+        {
+            [System.Double]$size = $filesecret.SecretFileSize -replace '\s[A-Z]+',''
+            
+            Switch -Regex (($filesecret.SecretFileSize -replace '^[\d\.]+\s([\w]+)$','$1'))
+            {
+                '^B$'  { $filesizetotal += $size; break }
+                '^KB$' { $filesizetotal += ($size * 1024); break }
+                '^MB$' { $filesizetotal += ($size * 1048576); break }
+                '^GB$' { $filesizetotal += ($size * 1073741824); break }
+                '^TB$' { $filesizetotal += ($size * 1099511627776); break }
+            }
+        }# foreach ($filesecret in $filesecrets)
+        return $filesizetotal
+    }# [System.Double]getTotalFileSize()
+
 }# class PlatformMetric
 
 # class for holding Platform metrics
@@ -2873,6 +2896,28 @@ class PlatformSet
             default { $this.PotentialOwner = "Multiple potential owners found" ; break }
         }# Switch ($owner.Count)
     }# determineOwner()
+
+    [PSCustomObject]getPlatformObjects()
+    {
+        $PlatformObjects = New-Object System.Collections.ArrayList
+
+        [System.String]$command = $null
+
+        Switch ($this.ObjectType)
+        {
+            "DataVault"    { $command = 'Get-PlatformSecret'; break }
+            "Server"       { $command = 'Get-PlatformSystem'; break }
+            "VaultAccount" { $command = 'Get-PlatformAccount'; break }
+            default        { Write-Host "This set type not supported yet."; return $false ; break }
+        }
+
+        foreach ($id in $this.MembersUuid)
+        {
+            Invoke-Expression -Command ('[void]$PlatformObjects.Add(({0} -Uuid {1}))' -f $command, $id)
+        }
+
+        return $PlatformObjects
+    }# [PSCustomObject]getPlatformObjects()
 }# class PlatformSet
 
 # class to hold SetMembers
