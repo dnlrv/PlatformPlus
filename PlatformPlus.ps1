@@ -1558,6 +1558,33 @@ function global:Are-SetMembersInOtherSets
 ###########
 
 ###########
+#region ### global:Get-PlatformUniqueSets # TEMPLATE
+###########
+function global:Get-PlatformUniqueSets
+{
+    param
+    (
+        [Parameter(Mandatory=$true, HelpMessage = "The Platform Sets to check to see if all the members are unique.")]
+        [PlatformSet[]]$Sets
+    )
+
+    $UniqueSets = New-Object System.Collections.ArrayList
+
+    foreach ($set in $Sets)
+    {
+        # if the set has members in other sets, 
+        if ((Are-SetMembersInOtherSets -Set $set) -eq $false)
+        {
+            $UniqueSets.Add($set) | Out-Null
+        }
+    }# foreach ($set in $Sets)
+
+    return $UniqueSets
+}# function global:Get-PlatformUniqueSets
+#endregion
+###########
+
+###########
 #region ### global:Get-PlatformBearerToken # Gets Platform Bearer Token information. Derived from Centrify.Platform.PowerShell.
 ###########
 function global:Get-PlatformBearerToken
