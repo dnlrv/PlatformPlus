@@ -2989,6 +2989,7 @@ class PlatformVault
 class PlatformAccount
 {
     [System.String]$AccountType
+    [System.String]$ComputerClass
     [System.String]$SourceName
     [System.String]$SourceType
     [System.String]$SourceID
@@ -3011,6 +3012,7 @@ class PlatformAccount
     {
        
         $this.AccountType = $t
+        $this.ComputerClass = $account.ComputerClass
         $this.SourceName = $account.Name
 
         # the tenant holds the source object's ID in different columns
