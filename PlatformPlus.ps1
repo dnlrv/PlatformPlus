@@ -3396,6 +3396,93 @@ class PlatformPrincipal
     }
 }# class PlatformPrincipal
 
+# class to hold migrated VaultAccount objects
+class MigrationReadyAccount
+{
+    [System.String]$Name
+    [System.String]$SecretTemplate
+    [System.String]$ParentFolder
+    [System.String]$Site
+    [System.Collections.ArrayList]$Slugs = @{}
+    [System.Collections.ArrayList]$Permissions = @{}
+    #[PSCustomObject]$PlatformAccount
+
+    MigrationReadyAccount($p)
+    {
+        #$this.PlatformAccount = $p
+        $this.Name = $p.SSName
+
+        # determine Secret Template
+        Switch ($p.AccountType)
+        {
+            "Local"
+            {
+                Switch ($p.ComputerClass)
+                {
+                    "Windows" { $this.SecretTemplate = "Windows Account"; break }
+                    "Unix"    { $this.SecretTemplate = "Unix Account (SSH)"; break }
+                    default   { break }
+                }
+                break
+            }# "Local"
+            "Domain" { $this.SecretTemplate = "Active Directory Account"; break }
+            "Cloud"  { $this.SecretTemplate = "Amazon IAM Console Password"; break }
+            default  { $this.SecretTemplate = $null; break }
+        }# Switch ($p.AccountType)
+
+        # setting permissions
+        foreach ($permission in $p.PermissionRowAces)
+        {
+            $obj = [MigrationReadyPermission]::new($permission.PrincipalType, $permission.PrincipalName, $permission.isInherited, $permission.PlatformPermission.GrantString)
+
+            $this.Permissions.Add($obj) | Out-Null
+        }
+
+        # adding the slugs
+        Switch -Regex ($this.SecretTemplate)
+        {
+            "Windows Account|Unix Account \(SSH\)"
+            {
+                $this.Slugs.Add((@{slug="machine";value=$p.SourceName}))
+                $this.Slugs.Add((@{slug="username";value=$p.Username}))
+                $this.Slugs.Add((@{slug="password";value=$p.Password}))
+                $this.Slugs.Add((@{slug="notes";value=$p.Description}))
+                break
+            }
+            "Active Directory Account"
+            {
+                $this.Slugs.Add((@{slug="domain";value=$p.SourceName}))
+                $this.Slugs.Add((@{slug="username";value=$p.Username}))
+                $this.Slugs.Add((@{slug="password";value=$p.Password}))
+                $this.Slugs.Add((@{slug="notes";value=$p.Description}))
+                break
+            }
+            default
+            {
+                break
+            }
+        }
+    }# MigrationReadyAccount([PlatformAccount]$p)
+
+}# class MigrationReadyAccount
+
+# class to hold migrated permissions
+class MigrationReadyPermission
+{
+    [System.String]$Type
+    [System.String]$Name
+    [System.Boolean]$isInherited
+    [System.String]$Permissions
+
+    MigrationReadyPermission([System.String]$t, [System.String]$n, [System.Boolean]$i, [System.String]$p)
+    {
+        $this.Type = $t
+        $this.Name = $n
+        $this.isInherited = $i
+        $this.Permissions = $p
+    }
+}# class MigrationReadyPermission
+
 # class to hold a custom PlatformError
 class PlatformAPIException : System.Exception
 {
