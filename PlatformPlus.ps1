@@ -1445,6 +1445,30 @@ function global:Get-PlatformMetrics
 ###########
 
 ###########
+#region ### global:New-MigrationReadyAccount # TEMPLATE
+###########
+function global:New-MigrationReadyAccount
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "The PlatformAccount object to prepare for migration.")]
+        [PSCustomObject[]]$PlatformAccount
+    )
+
+    $MigrationReadyAccounts = New-Object System.Collections.ArrayList
+
+    foreach ($account in $PlatformAccount)
+    {
+        $obj = [MigrationReadyAccount]::new($account)
+        $MigrationReadyAccounts.Add($obj) | Out-Null
+    }# foreach ($account in $PlatformAccount)
+
+    return $MigrationReadyAccounts
+}# function global:New-MigrationReadyAccount
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
