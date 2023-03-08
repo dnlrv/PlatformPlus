@@ -2490,6 +2490,48 @@ function global:Prepare-ZoneRoles
 #endregion
 ###########
 
+###########
+#region ### global:ConvertTo-SecretServerPermissions # TEMPLATE
+###########
+function global:ConvertTo-SecretServerPermission
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "Type")]
+        [ValidateSet("Self","Set","Folder")]
+        $Type,
+
+        [Parameter(Mandatory = $true, HelpMessage = "Name")]
+        $Name,
+
+        [Parameter(Mandatory = $true, HelpMessage = "The JSON roles to prepare.")]
+        $RowAce
+    )
+
+    if ($RowAce.PlatformPermission.GrantString -match "(Grant|Owner)")
+    {
+        $perms = "Owner"
+    }
+    elseif ($RowAce.PlatformPermission.GrantString -match '(Checkout|Retrieve|Naked)')
+    {
+        $perms = "View"
+    }
+    elseif ($RowAce.PlatformPermission.GrantString -like "*Edit*")
+    {
+        $perms = "Edit"
+    }
+    else
+    {
+        $perms = "List"
+    }
+
+    $permission = [Permission]::new($Type,$Name,$RowAce.PrincipalType,$RowAce.PrincipalName,$RowAce.isInherited,$perms,$RowAce.PlatformPermission.GrantString)
+    
+    return $permission
+
+}# function global:ConvertTo-SecretServerPermissions
+#endregion
+###########
 
 ###########
 #region ### global:TEMPLATE # TEMPLATE
@@ -3457,9 +3499,9 @@ class MigrationReadyAccount
         # setting permissions
         foreach ($permission in $p.PermissionRowAces)
         {
-            $obj = [MigrationReadyPermission]::new($permission.PrincipalType, $permission.PrincipalName, $permission.isInherited, $permission.PlatformPermission.GrantString)
+            #$obj = [MigrationReadyPermission]::new($permission.PrincipalType, $permission.PrincipalName, $permission.isInherited, $permission.PlatformPermission.GrantString)
 
-            $this.Permissions.Add($obj) | Out-Null
+            #$this.Permissions.Add($obj) | Out-Null
         }
 
         # adding the slugs
@@ -3491,21 +3533,130 @@ class MigrationReadyAccount
 }# class MigrationReadyAccount
 
 # class to hold migrated permissions
-class MigrationReadyPermission
+class Permission
 {
-    [System.String]$Type
-    [System.String]$Name
+    [System.String]$PermissionType
+    [System.String]$PermissionName
+    [System.String]$PrincipalType
+    [System.String]$PrincipalName
     [System.Boolean]$isInherited
     [System.String]$Permissions
+    [System.String]$OriginalPermissions
 
-    MigrationReadyPermission([System.String]$t, [System.String]$n, [System.Boolean]$i, [System.String]$p)
+    Permission([System.String]$pt, [System.String]$pn, [System.String]$prt, [System.String]$prn, `
+               [System.String]$ii, [System.String[]]$p, [System.String[]]$op)
     {
-        $this.Type = $t
-        $this.Name = $n
-        $this.isInherited = $i
-        $this.Permissions = $p
+        $this.PermissionType      = $pt
+        $this.PermissionName      = $pn
+        $this.PrincipalType       = $prt
+        $this.PrincipalName       = $prn
+        $this.isInherited         = $ii
+        $this.Permissions         = $p
+        $this.OriginalPermissions = $op
+    }# Permission([System.String]$pt, [System.String]$pn, [System.String]$prt, [System.String]$prn, `
+}# class Permission
+
+# class to hold DataVaultCredential
+class DataVaultCredential
+{
+    [System.String]$Username
+    [System.String]$Password
+    [System.String]$Target
+    [System.String]$Template
+    [Permission[]]$Permissions
+    [System.Collections.Hashtable]$Slugs
+
+    DataVaultCredential([System.String]$u, [System.String]$p, [System.String]$t, `
+                        [System.String]$tm, [Permission[]]$pr, [System.Collections.Hashtable]$s)
+    {
+        $this.Username = $u
+        $this.Password = $p
+        $this.Target   = $t
+        $this.Template = $tm
+        $this.Slugs    = $s
+    }# DataVaultCredential([System.String]$u, [System.String]$p, [System.String]$t, `
+}# class DataVaultCredential
+
+# class to hold a MigratedCredential
+class MigratedCredential
+{
+    [System.String]$SecretTemplate
+    [System.String]$SecretName
+    [System.String]$Target
+    [System.String]$Username
+    [System.String]$Password
+    [System.String]$Folder
+    [System.Boolean]$hasConflicts
+    [System.String]$PASDataType
+    [System.Collections.Generic.List[Permission]]$Permissions = @{}
+    [System.Collections.Generic.List[Permission]]$FolderPermissions = @{}
+    [System.Collections.Generic.List[Permission]]$SetPermissions = @{}
+    [System.Collections.Hashtable]$Slugs
+
+    MigratedCredential($obj)
+    {
+        if ($obj.GetType().Name -eq "PlatformAccount") { $this.createFromPlatformAccount($obj) }
+        if ($obj.GetType().Name -eq "PlatformSecret")  { $this.createFromPlatformSecret($obj) }
     }
-}# class MigrationReadyPermission
+
+    createFromPlatformAccount($pa)
+    {
+        # placeholder to determine target
+        [System.String]$FQDN = $null
+
+        switch ($pa.AccountType)
+        {
+            'Local' 
+            {
+                $query = Query-VaultRedRock -SQLQuery ("Select FQDN FROM Server WHERE ID = '{0}'" -f $pa.SourceID)
+                if ($pa.ComputerClass -eq "Windows") { $this.SecretTemplate = "Windows Account" }
+                if ($pa.ComputerClass -eq "Unix")    { $this.SecretTemplate = "Unix Account (SSH)" }
+                $FQDN = $query.FQDN
+                break
+            }
+            'Domain'
+            {
+                $this.SecretTemplate = "Active Directory Account"
+                $FQDN = $pa.SourceName
+                break
+            }
+            'Database'
+            {
+                # this requires extrachecking DatabaseClass and ID from VaultDatabase table
+                $query = Query-VaultRedRock -SQLQuery ("SELECT FQDN,DatabaseClass FROM VaultDatabase WHERE ID = '{0}'" -f $pa.SourceID)
+                
+                switch ($query.DatabaseClass)
+                {
+                    'Oracle'    { $this.SecretTemplate = "Oracle Account"; break}
+                    'SAPAse'    { $this.SecretTemplate = "SAP Account"; break }
+                    'SQLServer' { $this.SecretTemplate = "SQL Server Account"; break }
+                }
+
+                $FQDN = $query.FQDN
+                break
+            }
+        }# switch ($pa.AccountType)
+
+        # setting the Secret Name
+        $this.SecretName = $pa.SSName
+
+        $this.Target = $FQDN 
+        $this.Username = $pa.Username
+        $this.Password = $pa.Password
+
+        # Permissions
+        foreach ($rowace in $pa.PermissionRowAces)
+        {
+            $this.Permissions.Add((ConvertTo-SecretServerPermission -Type self -Name $pa.SSName -RowAce $rowace)) | Out-Null
+        }
+
+
+    }# MigratedCredential([PlatformAccount]$pa)
+
+    #MigratedCredential([DataVaultCredential]$dvc)
+    #{
+    #}# MigratedCredential([DataVaultCredential]$dvc)
+}# class MigratedCredential
 
 # class to hold a custom PlatformError
 class PlatformAPIException : System.Exception
