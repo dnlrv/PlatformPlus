@@ -2534,6 +2534,216 @@ function global:ConvertTo-SecretServerPermission
 ###########
 
 ###########
+#region ### global:ConvertTo-DataVaultCredential # TEMPLATE
+###########
+function global:ConvertTo-DataVaultCredential
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "Username")]
+        [System.String]$Username,
+
+        [Parameter(Mandatory = $true, HelpMessage = "Password")]
+        [System.String]$Password,
+
+        [Parameter(Mandatory = $true, HelpMessage = "Target")]
+        [System.String]$Target,
+
+        [Parameter(Mandatory = $true, HelpMessage = "Secret Template")]
+        [System.String]$SecretTemplate,
+
+        [Parameter(Mandatory = $true, HelpMessage = "ID of the PAS Secret")]
+        [System.String]$ID,
+
+        [Parameter(Mandatory = $true, HelpMessage = "RowAces")]
+        [PSTypeName('PlatformRowAce')]$RowAces,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Slugs")]
+        [System.Collections.Hashtable]$Slugs
+    )
+
+    $permissions = New-Object System.Collections.ArrayList
+
+    foreach ($rowace in $rowaces)
+    {
+        $permissions.Add((ConvertTo-SecretServerPermission -Type self -Name ("{0}\{1}" -f $Target, $Username) -RowAce $rowace)) | Out-Null
+    }
+
+    $obj = [DataVaultCredential]::new($Username, $Password, $Target, $SecretTemplate, $permissions, $ID, $Slugs)
+
+    return $obj
+
+}# function global:ConvertTo-DataVaultCredential
+#endregion
+###########
+
+###########
+#region ### global:ConvertTo-MigratedCredential # TEMPLATE
+###########
+function global:ConvertTo-MigratedCredential
+{
+    param
+    (
+        [Parameter(Mandatory = $true, HelpMessage = "DVC",ParameterSetName="DataVaultCredential")]
+        [PSTypeName('DataVaultCredential')]$DataVaultCredentials,
+
+        [Parameter(Mandatory = $true, HelpMessage = "PA",ParameterSetName="PlatformAccount")]
+        [PSTypeName('PlatformAccount')]$PlatformAccounts
+    )
+
+    $returnedobjects = New-Object System.Collections.ArrayList
+
+    if ($PSBoundParameters.ContainsKey('DataVaultCredentials'))
+    {
+        foreach ($dvc in $DataVaultCredentials)
+        {
+            $obj = [MigratedCredential]::new($dvc)
+            $returnedobjects.Add($obj) | Out-Null
+        }
+    }
+    elseif ($PSBoundParameters.ContainsKey('PlatformAccounts'))
+    {
+        foreach ($pa in $PlatformAccounts)
+        {
+            $obj = [MigratedCredential]::new($pa)
+            $returnedobjects.Add($obj) | Out-Null
+        }
+    }
+
+    return $returnedobjects
+}# function global:ConvertTo-MigratedCredential
+#endregion
+###########
+
+###########
+#region ### global:Prepare-PlatformSetBank # TEMPLATE
+###########
+function global:Prepare-PlatformSetBank
+{
+    <#
+    .SYNOPSIS
+    Gets Sets from the Platform with their members for storage and use later.
+
+    .DESCRIPTION
+    This cmdlet will retrieve the IDs of all Set objects in the tenant, then get the member IDs of all
+    set objects to be used in the $SetBank global variable 
+
+    .PARAMETER Multithreaded
+    Performs the gets using multithreading, which may improve get times.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function sets a global variable $SetBank that contains all Set information.
+
+    .EXAMPLE
+    C:\PS> Prepare-PlatformSetBank
+    Gets all Set IDs and member IDs from the Platform and sets it in $SetBank.
+
+    .EXAMPLE
+    C:\PS> Prepare-PlatformSetBank -Multithreaded
+    Gets all Set IDs and member IDs from the Platform and sets it in $SetBank. May perform faster
+    because of multithreading. Might be a quicker option for Platforms with larger numbers of sets.
+
+    .EXAMPLE
+    #>
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $false, HelpMessage = "Use multithreading.")]
+        [Switch]$Multithreaded
+    )
+
+    $SetIds = Query-VaultRedRock -SQLQuery "Select ID from Sets WHERE CollectionType = 'ManualBucket'" | Select-Object -ExpandProperty ID
+    $SetBank = New-Object System.Collections.ArrayList
+    
+    if ($Multithreaded.IsPresent)
+    {
+        [runspacefactory]::CreateRunspacePool()
+        $RunspacePool = [runspacefactory]::CreateRunspacePool(1,12)
+        $RunspacePool.Open()
+
+        $Jobs = New-Object System.Collections.ArrayList
+
+        foreach ($setid in $SetIds)
+        {
+            $PowerShell = [PowerShell]::Create()
+            $PowerShell.RunspacePool = $RunspacePool
+
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Sets" -Status ("{0} out of {1} Complete" -f $p,$SetIds.Count) -PercentComplete ($p/($SetIds | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+
+            # this works to pass PlatformPlus into 
+            [void]$PowerShell.AddScript((Get-Content ".\PlatformPlus.ps1" -Raw))
+            [void]$PowerShell.AddScript(
+            {
+
+            Param
+            (
+                $PlatformConnection,
+                $SessionInformation,
+                $SetID
+            )
+            $global:PlatformConnection = $PlatformConnection
+            $global:SessionInformation = $SessionInformation
+
+            $obj = [SetBankMember]::new($setid)
+
+            $members = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID=$setid} | ConvertTo-Json)
+
+            foreach ($member in $members.Key)
+            {
+                $obj.addMemberID($member)
+            }
+
+            return $obj
+
+            })# [void]$PowerShell.AddScript(
+            [void]$PowerShell.AddParameter('PlatformConnection',$global:PlatformConnection)
+            [void]$PowerShell.AddParameter('SessionInformation',$global:SessionInformation)
+            [void]$PowerShell.AddParameter('SetID',$setid)
+
+            $JobObject = @{}
+            $JobObject.Runspace   = $PowerShell.BeginInvoke()
+            $JobObject.PowerShell = $PowerShell
+
+            $Jobs.Add($JobObject) | Out-Null
+        }# foreach ($setid in $SetIds)
+
+        foreach ($job in $jobs)
+        {
+            $SetBank.Add($job.powershell.EndInvoke($job.RunSpace)) | Out-Null
+            $job.PowerShell.Dispose()
+        }
+    }# if ($Multithreaded.IsPresent)
+    else
+    {
+        foreach ($setid in $SetIds)
+        {
+            # Counter for the secret objects
+            $p++; Write-Progress -Activity "Processing Sets" -Status ("{0} out of {1} Complete" -f $p,$SetIds.Count) -PercentComplete ($p/($SetIds | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+            $obj = [SetBankMember]::new($setid)
+
+            $members = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID=$setid} | ConvertTo-Json)
+
+            foreach ($member in $members.Key)
+            {
+                $obj.addMemberID($member)
+            }
+
+            $SetBank.Add($obj) | Out-Null
+        }# foreach ($setid in $SetIds)
+    }# else
+
+    $global:SetBank = $SetBank
+}# function global:Prepare-PlatformSetBank
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -3462,6 +3672,23 @@ class PlatformPrincipal
     }
 }# class PlatformPrincipal
 
+# 
+class SetBankMember
+{
+    [System.String]$SetID
+    [System.Collections.ArrayList]$MemberIDs = @{}
+
+    SetBankMember([System.String]$sid)
+    {
+        $this.SetID = $sid
+    }
+
+    addMemberID([System.String]$id)
+    {
+        $this.MemberIDs.Add($id) | Out-Null
+    }
+}# class SetBankMember
+
 # class to hold migrated VaultAccount objects
 class MigrationReadyAccount
 {
@@ -3564,16 +3791,20 @@ class DataVaultCredential
     [System.String]$Target
     [System.String]$Template
     [Permission[]]$Permissions
+    [System.String]$PASUUID
     [System.Collections.Hashtable]$Slugs
 
     DataVaultCredential([System.String]$u, [System.String]$p, [System.String]$t, `
-                        [System.String]$tm, [Permission[]]$pr, [System.Collections.Hashtable]$s)
+                        [System.String]$tm, [Permission[]]$pr, [System.String]$i, `
+                        [System.Collections.Hashtable]$s)
     {
-        $this.Username = $u
-        $this.Password = $p
-        $this.Target   = $t
-        $this.Template = $tm
-        $this.Slugs    = $s
+        $this.Username    = $u
+        $this.Password    = $p
+        $this.Target      = $t
+        $this.Template    = $tm
+        $this.Permissions = $pr
+        $this.PASUUID     = $i
+        $this.Slugs       = $s
     }# DataVaultCredential([System.String]$u, [System.String]$p, [System.String]$t, `
 }# class DataVaultCredential
 
@@ -3588,15 +3819,18 @@ class MigratedCredential
     [System.String]$Folder
     [System.Boolean]$hasConflicts
     [System.String]$PASDataType
-    [System.Collections.Generic.List[Permission]]$Permissions = @{}
-    [System.Collections.Generic.List[Permission]]$FolderPermissions = @{}
-    [System.Collections.Generic.List[Permission]]$SetPermissions = @{}
+    [System.String]$PASUUID
+    [System.Collections.Generic.List[PlatformSet]]$memberOfSets = @{}
+    [System.Collections.ArrayList]$Permissions = @{}
+    [System.Collections.ArrayList]$FolderPermissions = @{}
+    [System.Collections.ArrayList]$SetPermissions = @{}
     [System.Collections.Hashtable]$Slugs
+    [PSObject]$OriginalObject
 
     MigratedCredential($obj)
     {
-        if ($obj.GetType().Name -eq "PlatformAccount") { $this.createFromPlatformAccount($obj) }
-        if ($obj.GetType().Name -eq "PlatformSecret")  { $this.createFromPlatformSecret($obj) }
+        if ($obj.GetType().Name -eq "PlatformAccount")      { $this.createFromPlatformAccount($obj) }
+        if ($obj.GetType().Name -eq "DataVaultCredential")  { $this.createFromDataVaultCredential($obj) }
     }
 
     createFromPlatformAccount($pa)
@@ -3644,18 +3878,68 @@ class MigratedCredential
         $this.Username = $pa.Username
         $this.Password = $pa.Password
 
+        $this.PASDataType = "VaultAccount"
+        $this.PASUUID = $pa.ID
+
         # Permissions
         foreach ($rowace in $pa.PermissionRowAces)
         {
             $this.Permissions.Add((ConvertTo-SecretServerPermission -Type self -Name $pa.SSName -RowAce $rowace)) | Out-Null
         }
 
+        $this.OriginalObject = $pa
 
+        $this.getSetMemberships()
     }# MigratedCredential([PlatformAccount]$pa)
 
-    #MigratedCredential([DataVaultCredential]$dvc)
-    #{
-    #}# MigratedCredential([DataVaultCredential]$dvc)
+    createFromDataVaultCredential($dvc)
+    {
+        # setting the Secret Template
+        $this.SecretTemplate = $dvc.Template
+
+        # setting the Secret Name
+        $this.SecretName = ("{0}\{1}" -f $dvc.Target, $dvc.Username)
+
+        $this.Target = $dvc.Target 
+        $this.Username = $dvc.Username
+        $this.Password = $dvc.Password
+
+        $this.PASDataType = "DataVault"
+        $this.PASUUID = $dvc.PASUUID
+
+        $this.Slugs = $dvc.Slugs
+
+        Write-Host ("count is {0}" -f $dvc.Permissions.Count)
+
+        foreach ($perms in $dvc.Permissions)
+        {
+            $this.Permissions.Add($perms) | Out-Null
+        }
+        
+        $this.OriginalObject = $dvc
+
+        $this.getSetMemberships()
+    }# createFromDataVaultCredential($dvc)
+
+    setFolder([System.String]$FolderName)
+    {
+        $this.Folder = $FolderName
+    }
+
+    getSetMemberships()
+    {
+        $queries = Query-VaultRedRock -SQLQuery ("SELECT ID,Name FROM Sets WHERE ObjectType = '{0}' AND CollectionType = 'ManualBucket'" -f $this.PASDataType)
+
+        foreach ($query in $queries)
+        {
+            $isMember = Invoke-PlatformAPI -APICall Collection/IsMember -Body ( @{ID=$query.ID; Table=$this.PASDataType; Key=$this.PASUUID} | ConvertTo-Json)
+
+            if ($isMember)
+            {
+                $this.memberOfSets.Add((Get-PlatformSet -Uuid $query.ID)) | Out-Null
+            }
+        }
+    }
 }# class MigratedCredential
 
 # class to hold a custom PlatformError
