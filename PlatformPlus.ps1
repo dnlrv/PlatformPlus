@@ -839,7 +839,7 @@ function global:Get-PlatformAccount
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
-        [Parameter(Mandatory = $true, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
+        [Parameter(Mandatory = $false, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
         [ValidateSet("Local","Domain","Database","Cloud")]
         [System.String]$Type,
 
