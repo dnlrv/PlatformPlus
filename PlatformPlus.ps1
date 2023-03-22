@@ -2652,8 +2652,26 @@ function global:Prepare-PlatformSetBank
     param
     (
         [Parameter(Mandatory = $false, HelpMessage = "Use multithreading.")]
-        [Switch]$Multithreaded
+        [Switch]$Multithreaded,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Export the SetBank.",ParameterSetName="Export")]
+        [Switch]$Export,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Load the SetBank from a local file.",ParameterSetName="Load")]
+        [Switch]$Load
     )
+
+    if ($Export.IsPresent)
+    {
+        $global:SetBank | Export-Clixml .\PlatformSetBank.xml
+        return
+    }
+
+    if ($Load.IsPresent)
+    {
+        $global:SetBank = Import-Clixml .\PlatformSetBank.xml
+        return
+    }
 
     $SetIds = Query-VaultRedRock -SQLQuery "Select ID from Sets WHERE CollectionType = 'ManualBucket'" | Select-Object -ExpandProperty ID
     $SetBank = New-Object System.Collections.ArrayList
@@ -3909,8 +3927,6 @@ class MigratedCredential
 
         $this.Slugs = $dvc.Slugs
 
-        Write-Host ("count is {0}" -f $dvc.Permissions.Count)
-
         foreach ($perms in $dvc.Permissions)
         {
             $this.Permissions.Add($perms) | Out-Null
@@ -3928,18 +3944,32 @@ class MigratedCredential
 
     getSetMemberships()
     {
-        $queries = Query-VaultRedRock -SQLQuery ("SELECT ID,Name FROM Sets WHERE ObjectType = '{0}' AND CollectionType = 'ManualBucket'" -f $this.PASDataType)
-
-        foreach ($query in $queries)
+        # if the SetBank exists, uses that for faster gets
+        if ($global:SetBank -ne $null)
         {
-            $isMember = Invoke-PlatformAPI -APICall Collection/IsMember -Body ( @{ID=$query.ID; Table=$this.PASDataType; Key=$this.PASUUID} | ConvertTo-Json)
+            $memberof = $global:SetBank | Where-Object {$_.MemberIDs -contains $this.PASUUID}
 
-            if ($isMember)
+            foreach ($member in $memberof)
             {
-                $this.memberOfSets.Add((Get-PlatformSet -Uuid $query.ID)) | Out-Null
+                $this.memberOfSets.Add((Get-PlatformSet -Uuid $member.SetID)) | Out-Null
             }
-        }
-    }
+        }# if ($global:SetBank -ne $null)
+        else # otherwise query it
+        {
+            $queries = Query-VaultRedRock -SQLQuery ("SELECT ID,Name FROM Sets WHERE ObjectType = '{0}' AND CollectionType = 'ManualBucket'" -f $this.PASDataType)
+
+            foreach ($query in $queries)
+            {
+                $isMember = Invoke-PlatformAPI -APICall Collection/IsMember -Body ( @{ID=$query.ID; Table=$this.PASDataType; Key=$this.PASUUID} | ConvertTo-Json)
+
+                if ($isMember)
+                {
+                    $this.memberOfSets.Add((Get-PlatformSet -Uuid $query.ID)) | Out-Null
+                }
+            }
+        }# else
+
+    }# getSetMemberships()
 }# class MigratedCredential
 
 # class to hold a custom PlatformError
