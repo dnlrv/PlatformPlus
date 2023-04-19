@@ -839,20 +839,17 @@ function global:Get-PlatformAccount
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
-        [Parameter(Mandatory = $true, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
+        [Parameter(Mandatory = $false, HelpMessage = "The type of Account to search.", ParameterSetName = "Type")]
         [ValidateSet("Local","Domain","Database","Cloud")]
         [System.String]$Type,
 
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Source")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Type")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Source of the Account to search.", ParameterSetName = "Source")]
         [System.String]$SourceName,
 
-        [Parameter(Mandatory = $true, HelpMessage = "The name of the Account to search.", ParameterSetName = "UserName")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
+        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "UserName")]
         [System.String]$UserName,
 
-        [Parameter(Mandatory = $true, HelpMessage = "The Uuid of the Account to search.",ParameterSetName = "Uuid")]
-        [Parameter(Mandatory = $false, HelpMessage = "The name of the Account to search.", ParameterSetName = "Type")]
+        [Parameter(Mandatory = $false, HelpMessage = "The Uuid of the Account to search.",ParameterSetName = "Uuid")]
         [System.String]$Uuid,
 
         [Parameter(Mandatory = $false, HelpMessage = "A limit on number of objects to query.")]
@@ -2543,7 +2540,7 @@ function global:ConvertTo-DataVaultCredential
         [Parameter(Mandatory = $true, HelpMessage = "Username")]
         [System.String]$Username,
 
-        [Parameter(Mandatory = $true, HelpMessage = "Password")]
+        [Parameter(Mandatory = $false, HelpMessage = "Password")]
         [System.String]$Password,
 
         [Parameter(Mandatory = $true, HelpMessage = "Target")]
@@ -3968,8 +3965,85 @@ class MigratedCredential
                 }
             }
         }# else
-
+        $this.determineConflicts()
     }# getSetMemberships()
+
+    determineConflicts()
+    {
+        # if this has membership in more than 1 Set
+        if ($this.memberOfSets.Count -gt 1)
+        {
+            $this.hasConflicts = $true
+        }
+        else
+        {
+            $this.hasConflicts = $false
+        }
+    }# determineConflicts()
+
+    SetSetPermissions($Name, $RowAces)
+    {
+        foreach ($rowace in in $RowAces)
+        {
+            $obj = ConvertTo-SecretServerPermission -Type Set -Name $Name -RowAce $rowace
+
+            $this.SetPermissions.Add($obj) | Out-Null
+        }
+    }# SetSetPermissions($PlatformSet)
+
+    SetFolderPermissions($Name, $RowAces)
+    {
+        foreach ($rowace in $RowAces)
+        {
+            $obj = ConvertTo-SecretServerPermission -Type Folder -Name $Name -RowAce $rowace
+
+            $this.FolderPermissions.Add($obj) | Out-Null
+        }
+    }# SetFolderPermissions($Name, $RowAces)
+
+    [System.Boolean] UnmanageAccount()
+    {
+        # if the account was successfully unmanaged
+        if ($manageaccount = Invoke-PlatformAPI ServerManage/UpdateAccount -Body (@{ID=$this.PASUUID;User=$this.Username;SourceType=$this.OriginalObject.SourceID;IsManaged=$false}|ConvertTo-Json))
+        {
+            $this.isManaged = $false
+            return $true
+        }
+        return $false
+    }# [System.Boolean] UnmanageAccount()
+
+    [System.Boolean] CheckOutPassword()
+    {
+        # if checkout is successful
+        if ($checkout = Invoke-PlatformAPI -APICall ServerManage/CheckoutPassword -Body (@{ID = $this.PASUUID} | ConvertTo-Json))
+        {   
+            # set these checkout fields
+            $this.Password = $checkout.Password
+        }# if ($checkout = Invoke-PlatformAPI -APICall ServerManage/CheckoutPassword -Body (@{ID = $this.PASUUID} | ConvertTo-Json))
+        else
+        {
+            return $false
+        }
+        return $true
+    }# [System.Boolean] CheckOutPassword()
+
+    # method to retrieve secret content
+    [System.Boolean] RetrieveTextSecret()
+    {
+        # if checkout is successful
+        if ($retrieve = (Invoke-PlatformAPI -APICall ServerManage/RetrieveSecretContents -Body (@{ ID = $this.PASUUID } | ConvertTo-Json) | Select-Object -ExpandProperty SecretText))
+        {
+            $this.Password = $retrieve
+        }# if ($retrieve = Invoke-PlatformAPI -APICall ServerManage/RetrieveSecretContents -Body (@{ ID = $this.PASUUID } | ConvertTo-Json) | Select-Object -ExpandProperty SecretText)
+        else
+        {
+            return $false
+        }
+        return $true
+    }# [System.Boolean] RetrieveTextSecret()
+
+
+
 }# class MigratedCredential
 
 # class to hold a custom PlatformError
