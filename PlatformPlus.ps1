@@ -732,8 +732,8 @@ function global:Get-PlatformSet
             # create a new Platform Set object
             $set = [PlatformSet]::new($q)
 
-            # if the Set is a Manual Set (not a Folder or Dynamic Set)
-            if ($set.SetType -eq "ManualBucket")
+            # if the Set is a Manual Set or a Folder (not a Dynamic Set)
+            if ($set.SetType -eq "ManualBucket" -or $set.SetType -eq "Phantom")
             {
                 # get the Uuids of the members
                 $set.GetMembers()
@@ -2759,6 +2759,64 @@ function global:Prepare-PlatformSetBank
 ###########
 
 ###########
+#region ### global:Get-PlatformSetDiagram # Initial work for a way to display Set information in a more visual manner
+###########
+function global:Get-PlatformSetDiagram
+{
+    # verify an active platform connection
+    Verify-PlatformConnection
+
+    # set query
+    $sets = Query-VaultRedRock -SQLQuery "SELECT Name,ID,ObjectType,CollectionType FROM Sets LIMIT 50"
+
+    # Get Set Bank
+    if ($global:SetBank -eq $null)
+    {
+        Prepare-PlatformSetBank -Multithreaded
+    }
+
+    $DiagramSets = New-Object System.Collections.ArrayList
+
+    foreach ($set in $sets)
+    {
+        Write-Host ("Set [{0}]" -f $set.Name)
+        $obj = [DiagramSet]::new($set.Name,$set.ObjectType)
+
+        $members = ($global:SetBank | Where-Object {$_.SetID -eq $set.ID}).MemberIDs
+
+        Switch($set.ObjectType)
+        {
+            "DataVault"    { $query = "SELECT SecretName AS Name FROM DataVault WHERE ID = "; break }
+            "Server"       { $query = "SELECT FQDN AS Name FROM Server WHERE ID = "; break }
+            "VaultAccount" { $query = "SELECT User AS Name FROM VaultAccount WHERE ID = "; break }
+            default { $query = $null }
+        }# Switch($set.ObjectType)
+
+        if ($query -eq $null)
+        {
+            continue
+        }
+
+        foreach ($member in $members)
+        {
+            Write-Host ("member [{0}]" -f $member)
+
+            $newquery = $query + ("'{0}'" -f $member)
+
+            $name = Query-VaultRedRock -SQLQuery $newquery | Select-Object -ExpandProperty Name
+
+            $obj.AddMember($name) | Out-Null
+        }
+
+        $DiagramSets.Add($obj) | Out-Null
+    }# foreach ($set in $sets)
+
+    return $DiagramSets
+}# function global:Get-PlatformSetDiagram
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -3174,8 +3232,29 @@ class PlatformSet
 
     getMembers()
     {
+        # getting members
+        [PSObject]$m = $null
+
+        # a little tinkering because Secret Folders ('Phantom') need a different endpoint to get members
+        Switch ($this.SetType)
+        {
+            "Phantom" # if this SetType is a Secret Folder
+            { 
+                # get the members and reformat the data a bit so it matches Collection/GetMembers
+                $m = Invoke-PlatformAPI -APICall ServerManage/GetSecretsAndFolders -Body (@{Parent=$this.ID} | ConvertTo-Json)
+                $m = $m.Results.Entities
+                $m | Add-Member -Type NoteProperty -Name Table -Value DataVault
+                break
+            }
+            "ManualBucket" # if this SetType is a Manual Set
+            {
+                $m = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID = $this.ID} | ConvertTo-Json)
+            }
+            default        { break }
+        }
+
         # getting the set members
-        if ($m = Invoke-PlatformAPI -APICall Collection/GetMembers -Body (@{ID = $this.ID} | ConvertTo-Json))
+        if ($m -ne $null)
         {
             # Adding the Uuids to the Members property
             foreach ($u in $m)
@@ -3704,75 +3783,42 @@ class SetBankMember
     }
 }# class SetBankMember
 
-# class to hold migrated VaultAccount objects
-class MigrationReadyAccount
+class DiagramSet
 {
-    [System.String]$Name
-    [System.String]$SecretTemplate
-    [System.String]$ParentFolder
-    [System.String]$Site
-    [System.Collections.ArrayList]$Slugs = @{}
-    [System.Collections.ArrayList]$Permissions = @{}
-    #[PSCustomObject]$PlatformAccount
+    [System.String]$SetName
+    [System.String]$SetType
+    [System.Collections.ArrayList]$SetMembers = @{}
 
-    MigrationReadyAccount($p)
+    DiagramSet([System.String]$sn, [System.String]$st)
     {
-        #$this.PlatformAccount = $p
-        $this.Name = $p.SSName
+        $this.SetName = $sn
+        $this.SetType = $st
+    }
 
-        # determine Secret Template
-        Switch ($p.AccountType)
+    addMember([System.String]$n)
+    {
+        $this.SetMembers.Add($n) | Out-Null
+    }
+
+    [System.Collections.ArrayList] ExportData()
+    {
+
+        $data = New-Object System.Collections.ArrayList
+
+        foreach ($member in $this.SetMembers)
         {
-            "Local"
-            {
-                Switch ($p.ComputerClass)
-                {
-                    "Windows" { $this.SecretTemplate = "Windows Account"; break }
-                    "Unix"    { $this.SecretTemplate = "Unix Account (SSH)"; break }
-                    default   { break }
-                }
-                break
-            }# "Local"
-            "Domain" { $this.SecretTemplate = "Active Directory Account"; break }
-            "Cloud"  { $this.SecretTemplate = "Amazon IAM Console Password"; break }
-            default  { $this.SecretTemplate = $null; break }
-        }# Switch ($p.AccountType)
+            $obj = New-Object PSObject
 
-        # setting permissions
-        foreach ($permission in $p.PermissionRowAces)
-        {
-            #$obj = [MigrationReadyPermission]::new($permission.PrincipalType, $permission.PrincipalName, $permission.isInherited, $permission.PlatformPermission.GrantString)
+            $obj | Add-Member -MemberType NoteProperty -Name SetName -Value $this.SetName
+            $obj | Add-Member -MemberType NoteProperty -Name SetType -Value $this.SetType
+            $obj | Add-Member -MemberType NoteProperty -Name SetMember -Value $member
 
-            #$this.Permissions.Add($obj) | Out-Null
-        }
+            $data.Add($obj) | Out-Null
+        }# foreach ($member in $this.SetMembers)
 
-        # adding the slugs
-        Switch -Regex ($this.SecretTemplate)
-        {
-            "Windows Account|Unix Account \(SSH\)"
-            {
-                $this.Slugs.Add((@{slug="machine";value=$p.SourceName}))
-                $this.Slugs.Add((@{slug="username";value=$p.Username}))
-                $this.Slugs.Add((@{slug="password";value=$p.Password}))
-                $this.Slugs.Add((@{slug="notes";value=$p.Description}))
-                break
-            }
-            "Active Directory Account"
-            {
-                $this.Slugs.Add((@{slug="domain";value=$p.SourceName}))
-                $this.Slugs.Add((@{slug="username";value=$p.Username}))
-                $this.Slugs.Add((@{slug="password";value=$p.Password}))
-                $this.Slugs.Add((@{slug="notes";value=$p.Description}))
-                break
-            }
-            default
-            {
-                break
-            }
-        }
-    }# MigrationReadyAccount([PlatformAccount]$p)
-
-}# class MigrationReadyAccount
+        return $data
+    }# ExportData()
+}# class DiagramSet
 
 # class to hold migrated permissions
 class Permission
@@ -3842,10 +3888,14 @@ class MigratedCredential
     [System.Collections.Hashtable]$Slugs
     [PSObject]$OriginalObject
 
+    MigratedCredential() {}
+
     MigratedCredential($obj)
     {
         if ($obj.GetType().Name -eq "PlatformAccount")      { $this.createFromPlatformAccount($obj) }
         if ($obj.GetType().Name -eq "DataVaultCredential")  { $this.createFromDataVaultCredential($obj) }
+        #if ($obj.OriginalObject.ToString() -eq "PlatformAccount") { $this.createFromPlatformAccount($obj) }
+        #if ($obj.OriginalObject.ToString() -eq "DataVaultCredential") { $this.createFromDataVaultCredential($obj) }
     }
 
     createFromPlatformAccount($pa)
@@ -4042,8 +4092,37 @@ class MigratedCredential
         return $true
     }# [System.Boolean] RetrieveTextSecret()
 
+    # rebuilds class from json data
+    reSerialize([PSObject]$mc)
+    {
+        foreach ($property in $mc.PSObject.Properties) 
+        {
+            $this.("{0}" -f $property.Name) = $property.Value
+        }
+    }#>
 
+    # print Permissions 
+    [System.Collections.ArrayList] exportPermissions()
+    {
+        $exportedpermissions = New-Object System.Collections.ArrayList
 
+        foreach ($perms in $this.Permissions)
+        {
+            $exportedpermissions.Add($perms) | Out-Null
+        }
+
+        foreach ($perms in $this.FolderPermissions)
+        {
+            $exportedpermissions.Add($perms) | Out-Null
+        }
+
+        foreach ($perms in $this.SetPermissions)
+        {
+            $exportedpermissions.Add($perms) | Out-Null
+        }
+
+        return $exportedpermissions
+    }
 }# class MigratedCredential
 
 # class to hold a custom PlatformError
