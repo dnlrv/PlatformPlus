@@ -1466,6 +1466,103 @@ function global:New-MigrationReadyAccount
 ###########
 
 ###########
+#region ### global:ConvertFrom-JsonToPlatformSet # Converts stored json data back into a PlatformSet object with class methods
+###########
+function global:ConvertFrom-JsonToPlatformSet
+{
+    <#
+    .SYNOPSIS
+    Converts JSON-formatted PlatformSet data back into a PlatformSet object. Returns an ArrayList of PlatformSet class objects.
+
+    .DESCRIPTION
+    This function will take JSON data that was created from a PlatformSet class object, and recreate that PlatformSet
+    class object that has all available methods for a PlatformSet object. This is returned as an ArrayList of PlatformSet
+    class objects.
+
+    .PARAMETER JSONSets
+    Provides the JSON-formatted data for PlatformSets.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs an ArrayList of PlatformSet class objects.
+
+    .EXAMPLE
+    C:\PS> ConvertFrom-JsonToPlatformSet -JSONSets $JsonSets
+    Converts JSON-formatted PlatformSet data into a PlatformSet class object.
+    #>
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The PlatformAccount object to prepare for migration.")]
+        [PSCustomObject[]]$JSONSets
+    )
+
+    # a new ArrayList to return
+    $NewPlatformSets = New-Object System.Collections.ArrayList
+
+    # for each set object in our JSON data
+    foreach ($platformset in $JSONSets)
+    {
+        # new empty PlatformSet object
+        $obj = New-Object PlatformSet
+
+        # copying information over
+        $obj.SetType        = $platformset.SetType
+        $obj.ObjectType     = $platformset.ObjectType
+        $obj.Name           = $platformset.Name
+        $obj.ID             = $platformset.ID
+        $obj.whenCreated    = $platformset.whenCreated
+        $obj.ParentPath     = $platformset.ParentPath
+        $obj.PotentialOwner = $platformset.PotentialOwner
+
+        # new ArrayList for the PermissionRowAces property
+        $rowaces = New-Object System.Collections.ArrayList
+
+        # for each PermissionRowAce in our PlatformSet object
+        foreach ($permissionrowace in $platformset.PermissionRowAces)
+        {
+            # create a new PlatformRowAce object from that rowace data
+            $pra = [PlatformRowAce]::new($permissionrowace)
+
+            # add it to the PermissionRowAces ArrayList
+            $rowaces.Add($pra) | Out-Null
+        }# foreach ($permissionrowace in $platformset.PermissionRowAces)
+
+        # add these permission row aces to our PlatformSet object
+        $obj.PermissionRowAces = $rowaces
+
+        # new ArrayList for the PermissionRowAces property
+        $memberrowaces = New-Object System.Collections.ArrayList
+
+        # for each MemberPermissionRowAce in our PlatformSet object
+        foreach ($memberrowace in $platformset.MemberPermissionRowAces)
+        {
+            # create a new PlatformRowAce object from that rowace data
+            $pra = [PlatformRowAce]::new($memberrowace)
+            
+            # add it to the MemberPermissionRowAces ArrayList
+            $memberrowaces.Add($pra) | Out-Null
+        }# foreach ($memberrowace in $platformset.MemberPermissionRowAces)
+
+        # add these permission row aces to our PlatformSet object
+        $obj.MemberPermissionRowAces = $memberrowaces
+
+        # get the members of this Set
+        $obj.getMembers()
+
+        # add this object to our return ArrayList
+        $NewPlatformSets.Add($obj) | Out-Null
+    }# foreach ($platformset in $JSONSets)
+
+    # return the ArrayList
+    return $NewPlatformSets
+}# function global:ConvertFrom-JsonToPlatformSet
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -2974,6 +3071,14 @@ class PlatformPermission
     [System.String]$GrantBinary # the binary string of the the permission mask
     [System.String]$GrantString # the human readable permission mask
 
+    PlatformPermission ([PSCustomObject]$pp)
+    {
+        $this.Type = $pp.Type
+        $this.GrantInt = $pp.GrantInt
+        $this.GrantBinary = $pp.GrantBinary
+        $this.GrantString = Convert-PermissionToString -Type $pp.Type -PermissionInt ([System.Convert]::ToInt64($pp.GrantBinary,2))
+    }# PlatformPermission ([PSCustomObject]$pp)
+
     PlatformPermission ([System.String]$t, [System.Int64]$gi, [System.String]$gb)
     {
         $this.Type        = $t
@@ -2991,6 +3096,15 @@ class PlatformRowAce
     [System.String]$PrincipalName           # the name of the principal
     [System.Boolean]$isInherited            # determines if this permission is inherited
     [PlatformPermission]$PlatformPermission # the platformpermission object
+
+    PlatformRowAce([PSCustomObject]$pra)
+    {
+        $this.PrincipalType      = $pra.PrincipalType
+        $this.PrincipalUuid      = $pra.PrincipalUuid
+        $this.PrincipalName      = $pra.PrincipalName
+        $this.isInherited        = $pra.isInherited
+        $this.PlatformPermission = [PlatformPermission]::new($pra.PlatformPermission)
+   }# PlatformRowAce([PSCustomObject]$pra)
 
     PlatformRowAce([System.String]$pt, [System.String]$puuid, [System.String]$pn, `
                    [System.Boolean]$ii, [PlatformPermission]$pp)
@@ -3204,6 +3318,7 @@ class PlatformSet
     [System.Collections.ArrayList]$SetMembers  = @{} # the members of this set
     [System.String]$PotentialOwner                   # a guess as to who possibly owns this set
 
+    PlatformSet() {}
 
     PlatformSet($set)
     {
