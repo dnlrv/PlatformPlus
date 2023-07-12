@@ -1495,7 +1495,7 @@ function global:ConvertFrom-JsonToPlatformSet
     [CmdletBinding(DefaultParameterSetName="All")]
     param
     (
-        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The PlatformAccount object to prepare for migration.")]
+        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The PlatformSet data to convert to a PlatformSet object.")]
         [PSCustomObject[]]$JSONSets
     )
 
@@ -1559,6 +1559,100 @@ function global:ConvertFrom-JsonToPlatformSet
     # return the ArrayList
     return $NewPlatformSets
 }# function global:ConvertFrom-JsonToPlatformSet
+#endregion
+###########
+
+###########
+#region ### global:ConvertFrom-JsonToMigratedCredential # Converts stored json data back into a MigratedCredential object with class methods
+###########
+function global:ConvertFrom-JsonToMigratedCredential
+{
+    <#
+    .SYNOPSIS
+    Converts JSON-formatted MigratedCredential data back into a MigratedCredential object. Returns an ArrayList of MigratedCredential class objects.
+
+    .DESCRIPTION
+    This function will take JSON data that was created from a MigratedCredential class object, and recreate that MigratedCredential
+    class object that has all available methods for a MigratedCredential object. This is returned as an ArrayList of MigratedCredential
+    class objects.
+
+    .PARAMETER JSONMigratedCredentials
+    Provides the JSON-formatted data for MigratedCredentials.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs an ArrayList of MigratedCredential class objects.
+
+    .EXAMPLE
+    C:\PS> ConvertFrom-JsonToMigratedCredential -JSONMigratedCredentials $JsonMigratedCredentials
+    Converts JSON-formatted MigratedCredential data into a MigratedCredential class object.
+    #>
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The MigratedCredential data to convert to a MigratedCredential object.")]
+        [PSCustomObject[]]$JSONMigratedCredentials
+    )
+
+    # a new ArrayList to return
+    $NewMigratedCredentials = New-Object System.Collections.ArrayList
+
+    # for each set object in our JSON data
+    foreach ($jsonmc in $JSONMigratedCredentials)
+    {
+        # new empty PlatformSet object
+        $obj = New-Object MigratedCredential
+
+        # copying information over
+        $obj.SecretTemplate    = $jsonmc.SecretTemplate
+        $obj.SecretName        = $jsonmc.SecretName
+        $obj.Target            = $jsonmc.Target
+        $obj.Username          = $jsonmc.Username
+        $obj.Password          = $jsonmc.Password
+        $obj.Folder            = $jsonmc.Folder
+        $obj.hasConflicts      = $jsonmc.hasConflicts
+        $obj.PASDataType       = $jsonmc.PASDataType
+        $obj.PASUUID           = $jsonmc.PASUUID
+
+        # getting set information
+        $obj.memberofSets      = ConvertFrom-JsonToPlatformSet -JSONSets $jsonmc.memberofSets
+
+        # setting an array for the three permission classes
+        $permissionproperties = "Permissions","SetPermissions","FolderPermissions"
+
+        # for each of those permissions
+        foreach ($permissionproperty in $permissionproperties)
+        {
+            # temporary ArrayList for 
+            $Permissions = New-Object System.Collections.ArrayList
+
+            # for each permission in that property
+            foreach ($permission in $jsonmc.$permissionproperty)
+            {
+                # recreate the Permission class
+                $perms = [Permission]::new($permission)
+
+                # add it to our temp ArrayList
+                $Permissions.Add($perms) | Out-Null
+            }# foreach ($permission in $jsonmc.$permissionproperty)
+
+            # add the temp ArrayList to our property
+            $obj.$permissionproperty = $Permissions
+        }# foreach ($permissionproperty in $permissionproperties)
+
+        # adding remaining permissions
+        $obj.Slugs          = $jsonmc.Slugs
+        # TODO: recreate this properly.
+        $obj.OriginalObject = $jsonmc.OriginalObject
+
+        $NewMigratedCredentials.Add($obj) | Out-Null
+    }# foreach ($jsonmc in $JSONMigratedCredentials)
+
+    # return the ArrayList
+    return $NewMigratedCredentials
+}# function ConvertFrom-JsonToMigratedCredential
 #endregion
 ###########
 
@@ -3946,6 +4040,17 @@ class Permission
     [System.String]$Permissions
     [System.String]$OriginalPermissions
 
+    Permission([PSCustomObject]$p)
+    {
+        $this.PermissionType      = $p.PermissionType
+        $this.PermissionName      = $p.PermissionName
+        $this.PrincipalType       = $p.PrincipalType
+        $this.PrincipalName       = $p.PrincipalName
+        $this.isInherited         = $p.isInherited
+        $this.Permissions         = $p.Permissions
+        $this.OriginalPermissions = $p.OriginalPermissions
+    }# Permission([PSCustomObject]$p)
+
     Permission([System.String]$pt, [System.String]$pn, [System.String]$prt, [System.String]$prn, `
                [System.String]$ii, [System.String[]]$p, [System.String[]]$op)
     {
@@ -3996,7 +4101,7 @@ class MigratedCredential
     [System.Boolean]$hasConflicts
     [System.String]$PASDataType
     [System.String]$PASUUID
-    [System.Collections.Generic.List[PlatformSet]]$memberOfSets = @{}
+    [System.Collections.ArrayList]$memberofSets = @{}
     [System.Collections.ArrayList]$Permissions = @{}
     [System.Collections.ArrayList]$FolderPermissions = @{}
     [System.Collections.ArrayList]$SetPermissions = @{}
@@ -4146,25 +4251,25 @@ class MigratedCredential
         }
     }# determineConflicts()
 
-    SetSetPermissions($Name, $RowAces)
+    SetSetPermissions($PlatformSet)
     {
-        foreach ($rowace in in $RowAces)
+        foreach ($rowace in $PlatformSet.PermissionRowAces)
         {
-            $obj = ConvertTo-SecretServerPermission -Type Set -Name $Name -RowAce $rowace
+            $obj = ConvertTo-SecretServerPermission -Type Set -Name $PlatformSet.Name -RowAce $rowace
 
             $this.SetPermissions.Add($obj) | Out-Null
         }
-    }# SetSetPermissions($PlatformSet)
+    }# SetSetPermission($PlatformSet)
 
-    SetFolderPermissions($Name, $RowAces)
+    SetFolderPermissions($PlatformSet)
     {
-        foreach ($rowace in $RowAces)
+        foreach ($rowace in $PlatformSet.PermissionRowAces)
         {
-            $obj = ConvertTo-SecretServerPermission -Type Folder -Name $Name -RowAce $rowace
+            $obj = ConvertTo-SecretServerPermission -Type Folder -Name $PlatformSet.Name -RowAce $rowace
 
             $this.FolderPermissions.Add($obj) | Out-Null
         }
-    }# SetFolderPermissions($Name, $RowAces)
+    }# SetFolderPermissions($PlatformSet)
 
     [System.Boolean] UnmanageAccount()
     {
@@ -4237,6 +4342,11 @@ class MigratedCredential
         }
 
         return $exportedpermissions
+    }# [System.Collections.ArrayList] exportPermissions()
+
+    exportToJson()
+    {
+        $this | ConvertTo-Json -Depth 10 | Out-File (".\{0}-{1}.json" -f $this.Target, $this.Username)
     }
 }# class MigratedCredential
 
