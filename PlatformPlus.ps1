@@ -1563,6 +1563,114 @@ function global:ConvertFrom-JsonToPlatformSet
 ###########
 
 ###########
+#region ### global:ConvertFrom-JsonToPlatformAccount # Converts stored json data back into a PlatformAccount object with class methods
+###########
+function global:ConvertFrom-JsonToPlatformAccount
+{
+    <#
+    .SYNOPSIS
+    Converts JSON-formatted PlatformAccount data back into a PlatformAccount object. Returns an ArrayList of PlatformAccount class objects.
+
+    .DESCRIPTION
+    This function will take JSON data that was created from a PlatformAccount class object, and recreate that PlatformAccount
+    class object that has all available methods for a PlatformAccount object. This is returned as an ArrayList of PlatformAccount
+    class objects.
+
+    .PARAMETER JSONAccount
+    Provides the JSON-formatted data for PlatformAccount.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs an ArrayList of PlatformAccount class objects.
+
+    .EXAMPLE
+    C:\PS> ConvertFrom-JsonToPlatformAccount -JSONAccounts $JsonAccounts
+    Converts JSON-formatted PlatformAccount data into a PlatformAccount class object.
+    #>
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The PlatformAccount data to convert to a PlatformAccount object.")]
+        [PSCustomObject[]]$JSONAccounts
+    )
+
+    # a new ArrayList to return
+    $NewPlatformAccounts = New-Object System.Collections.ArrayList
+
+    # for each set object in our JSON data
+    foreach ($platformaccount in $JSONAccounts)
+    {
+        # new empty PlatformSet object
+        $obj = New-Object PlatformAccount
+
+        # copying information over
+        $obj.AccountType     = $platformaccount.AccountType
+        $obj.ComputerClass   = $platformaccount.ComputerClass
+        $obj.SourceName      = $platformaccount.SourceName
+        $obj.SourceType      = $platformaccount.SourceType
+        $obj.SourceID        = $platformaccount.SourceID
+        $obj.Username        = $platformaccount.Username
+        $obj.ID              = $platformaccount.ID
+        $obj.isManaged       = $platformaccount.isManaged
+        $obj.Healthy         = $platformaccount.Healthy
+        $obj.LastHealthCheck = $platformaccount.LastHealthCheck
+        $obj.Password        = $platformaccount.Password
+        $obj.Description     = $platformaccount.Description
+        $obj.WorkflowEnabled = $platformaccount.WorkflowEnabled
+        $obj.SSName          = $platformaccount.SSName
+        $obj.LastCheckOut    = $platformaccount.LastCheckOut
+        $obj.CheckOutID      = $platformaccount.CheckOutID
+
+        # new PlatformVault object
+        $vault = [PlatformVault]::new($platformaccount.Vault)
+
+        # adding that to this object
+        $obj.Vault = $vault
+
+        # new ArrayList for the PermissionRowAces property
+        $rowaces = New-Object System.Collections.ArrayList
+
+        # for each PermissionRowAce in our PlatformAccount object
+        foreach ($permissionrowace in $platformaccount.PermissionRowAces)
+        {
+            # create a new PlatformRowAce object from that rowace data
+            $pra = [PlatformRowAce]::new($permissionrowace)
+
+            # add it to the PermissionRowAces ArrayList
+            $rowaces.Add($pra) | Out-Null
+        }# foreach ($permissionrowace in $platformaccount.PermissionRowAces)
+
+        # add these permission row aces to our PlatformAccount object
+        $obj.PermissionRowAces = $rowaces
+
+        # new ArrayList for the WorkflowApprovers property
+        $approvers = New-Object System.Collections.ArrayList
+
+        # for each approver in our PlatformAccount object
+        foreach ($approver in $platformaccount.WorkflowApprovers)
+        {
+            $aprv = [PlatformWorkflowApprover]::new($approver, $approver.isBackUp)
+
+            # add it to the approvers ArrayList
+            $approvers.Add($aprv) | Out-Null
+        }# foreach ($approver in $platformaccount.WorkflowApprovers)
+
+        # add these approvers to our PlatformAccount object
+        $obj.WorkflowApprovers = $approvers
+        
+        # add this object to our return ArrayList
+        $NewPlatformAccounts.Add($obj) | Out-Null
+    }# foreach ($platformaccount in $JSONAccounts)
+
+    # return the ArrayList
+    return $NewPlatformAccounts
+}# function global:ConvertFrom-JsonToPlatformAccount
+#endregion
+###########
+
+###########
 #region ### global:ConvertFrom-JsonToMigratedCredential # Converts stored json data back into a MigratedCredential object with class methods
 ###########
 function global:ConvertFrom-JsonToMigratedCredential
@@ -3557,7 +3665,12 @@ class PlatformVault
         $this.VaultType = $vault.VaultType
         $this.VaultName = $vault.VaultName
         $this.ID = $vault.ID
-        $this.LastSync = $vault.LastSync
+
+        if ($vault.LastSync -ne $null)
+        {
+            $this.LastSync = $vault.LastSync
+        }
+
         $this.SyncInterval = $vault.SyncInterval
         $this.Username = $vault.Username
         $this.Url = $vault.Url
@@ -3586,6 +3699,8 @@ class PlatformAccount
     [System.String]$SSName
     [System.DateTime]$LastCheckOut
     [System.String]$CheckOutID
+
+    PlatformAccount() {}
 
     PlatformAccount($account, [System.String]$t)
     {
