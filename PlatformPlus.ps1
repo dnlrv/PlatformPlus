@@ -1615,13 +1615,15 @@ function global:ConvertFrom-JsonToPlatformAccount
         $obj.ID              = $platformaccount.ID
         $obj.isManaged       = $platformaccount.isManaged
         $obj.Healthy         = $platformaccount.Healthy
-        $obj.LastHealthCheck = $platformaccount.LastHealthCheck
         $obj.Password        = $platformaccount.Password
         $obj.Description     = $platformaccount.Description
         $obj.WorkflowEnabled = $platformaccount.WorkflowEnabled
         $obj.SSName          = $platformaccount.SSName
-        $obj.LastCheckOut    = $platformaccount.LastCheckOut
         $obj.CheckOutID      = $platformaccount.CheckOutID
+
+        # DateTime null checks
+        if ($platformaccount.LastCheckout -ne $null)    { $obj.LastCheckOut    = $platformaccount.LastCheckOut    }
+        if ($platformaccount.LastHealthCheck -ne $null) { $obj.LastHealthCheck = $platformaccount.LastHealthCheck }
 
         # new PlatformVault object
         $vault = [PlatformVault]::new($platformaccount.Vault)
