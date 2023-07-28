@@ -1673,6 +1673,108 @@ function global:ConvertFrom-JsonToPlatformAccount
 ###########
 
 ###########
+#region ### global:ConvertFrom-JsonToPlatformSecret # Converts stored json data back into a PlatformSecret object with class methods
+###########
+function global:ConvertFrom-JsonToPlatformSecret
+{
+    <#
+    .SYNOPSIS
+    Converts JSON-formatted PlatformSecret data back into a PlatformSecret object. Returns an ArrayList of PlatformSecret class objects.
+
+    .DESCRIPTION
+    This function will take JSON data that was created from a PlatformSecret class object, and recreate that PlatformSecret
+    class object that has all available methods for a PlatformSecret object. This is returned as an ArrayList of PlatformSecret
+    class objects.
+
+    .PARAMETER JSONSecret
+    Provides the JSON-formatted data for PlatformSecret.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function outputs an ArrayList of PlatformSecret class objects.
+
+    .EXAMPLE
+    C:\PS> ConvertFrom-JsonToPlatformSecret -JSONSecrets $JsonSecrets
+    Converts JSON-formatted PlatformSecret data into a PlatformSecret class object.
+    #>
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The PlatformSecret data to convert to a PlatformSecret object.")]
+        [PSCustomObject[]]$JSONSecrets
+    )
+
+    # a new ArrayList to return
+    $NewPlatformSecrets = New-Object System.Collections.ArrayList
+
+    # for each set object in our JSON data
+    foreach ($platformsecret in $JSONSecrets)
+    {
+        # new empty PlatformSet object
+        $obj = New-Object PlatformSecret
+
+        # copying information over
+        $obj.Name = $platformsecret.Name
+        $obj.Type = $platformsecret.Type
+        $obj.ParentPath = $platformsecret.ParentPath
+        $obj.Description = $platformsecret.Description
+        $obj.ID = $platformsecret.ID
+        $obj.FolderId = $platformsecret.FolderId
+        $obj.SecretText = $platformsecret.SecretText
+        $obj.SecretFileName = $platformsecret.SecretFileName
+        $obj.SecretFileSize = $platformsecret.SecretFileSize
+        $obj.SecretFilePath = $platformsecret.SecretFilePath
+        $obj.WorkflowEnabled = $platformsecret.WorkflowEnabled
+
+        # DateTime null checks
+        if ($platformsecret.whenCreated -ne $null)   { $obj.whenCreated   = $platformsecret.whenCreated   }
+        if ($platformsecret.whenModified -ne $null)  { $obj.whenModified  = $platformsecret.whenModified  }
+        if ($platformsecret.lastRetrieved -ne $null) { $obj.lastRetrieved = $platformsecret.lastRetrieved } 
+
+        # new ArrayList for the RowAces property
+        $rowaces = New-Object System.Collections.ArrayList
+
+        # for each RowAce in our PlatformSecret object
+        foreach ($rowace in $platformsecret.RowAces)
+        {
+            # create a new PlatformRowAce object from that rowace data
+            $pra = [PlatformRowAce]::new($rowace)
+
+            # add it to the RowAces ArrayList
+            $rowaces.Add($pra) | Out-Null
+        }# foreach ($rowace in $platformsecret.RowAces)
+
+        # add these row aces to our PlatformSecret object
+        $obj.RowAces = $rowaces
+
+        # new ArrayList for the WorkflowApprovers property
+        $approvers = New-Object System.Collections.ArrayList
+
+        # for each approver in our PlatformSecret object
+        foreach ($approver in $platformsecret.WorkflowApprovers)
+        {
+            $aprv = [PlatformWorkflowApprover]::new($approver, $approver.isBackUp)
+
+            # add it to the approvers ArrayList
+            $approvers.Add($aprv) | Out-Null
+        }# foreach ($approver in $platformsecret.WorkflowApprovers)
+
+        # add these approvers to our PlatformSecret object
+        $obj.WorkflowApprovers = $approvers
+        
+        # add this object to our return ArrayList
+        $NewPlatformSecrets.Add($obj) | Out-Null
+    }# foreach ($platformsecret in $JSONSecrets)
+
+    # return the ArrayList
+    return $NewPlatformSecrets
+}# function global:ConvertFrom-JsonToPlatformSecret
+#endregion
+###########
+
+###########
 #region ### global:ConvertFrom-JsonToMigratedCredential # Converts stored json data back into a MigratedCredential object with class methods
 ###########
 function global:ConvertFrom-JsonToMigratedCredential
@@ -3340,6 +3442,8 @@ class PlatformSecret
     [PlatformRowAce[]]$RowAces                     # The RowAces (Permissions) of this Secret
     [System.Boolean]$WorkflowEnabled               # is Workflow enabled
     [PlatformWorkflowApprover[]]$WorkflowApprovers # the Workflow Approvers for this Secret
+
+    PlatformSecret () {}
 
     PlatformSecret ($secretinfo)
     {
