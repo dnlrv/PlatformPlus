@@ -1549,8 +1549,15 @@ function global:ConvertFrom-JsonToPlatformSet
         # add these permission row aces to our PlatformSet object
         $obj.MemberPermissionRowAces = $memberrowaces
 
-        # get the members of this Set
-        $obj.getMembers()
+        # for each setmember in our PlatformSet object
+        foreach ($setmember in $platformset.SetMembers)
+        {
+            # create a new SetMember object from that setmember data
+            $setmem = [SetMember]::new($setmember.Name, $setmember.Type, $setmember.Uuid)
+
+            # add it to our SetMembers ArrayList
+            $obj.SetMembers.Add($setmem) | Out-Null
+        }# foreach ($setmember in $platformset.SetMembers)
 
         # add this object to our return ArrayList
         $NewPlatformSets.Add($obj) | Out-Null
@@ -1602,7 +1609,7 @@ function global:ConvertFrom-JsonToPlatformAccount
     # for each set object in our JSON data
     foreach ($platformaccount in $JSONAccounts)
     {
-        # new empty PlatformSet object
+        # new empty PlatformAccount object
         $obj = New-Object PlatformAccount
 
         # copying information over
@@ -1814,6 +1821,9 @@ function global:ConvertFrom-JsonToMigratedCredential
     # for each set object in our JSON data
     foreach ($jsonmc in $JSONMigratedCredentials)
     {
+        # Counter for the secret objects
+        $p++; Write-Progress -Activity "Processing JSONs into MigratedCredentials" -Status ("{0} out of {1} Complete" -f $p,$JSONMigratedCredentials.Count) -PercentComplete ($p/($JSONMigratedCredentials | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
         # new empty PlatformSet object
         $obj = New-Object MigratedCredential
 
@@ -1829,7 +1839,12 @@ function global:ConvertFrom-JsonToMigratedCredential
         $obj.PASUUID           = $jsonmc.PASUUID
 
         # getting set information
-        $obj.memberofSets      = ConvertFrom-JsonToPlatformSet -JSONSets $jsonmc.memberofSets
+        if (($jsonmc.memberofSets | Measure-Object | Select-Object -ExpandProperty Count) -gt 0)
+        {
+            $membersets = ConvertFrom-JsonToPlatformSet -JSONSets $jsonmc.memberOfSets
+
+            $obj.memberofSets.AddRange(@($membersets)) | Out-Null
+        }
 
         # setting an array for the three permission classes
         $permissionproperties = "Permissions","SetPermissions","FolderPermissions"
