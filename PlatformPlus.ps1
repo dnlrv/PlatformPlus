@@ -1884,6 +1884,34 @@ function global:ConvertFrom-JsonToMigratedCredential
 ###########
 
 ###########
+#region ### global:Get-PlatformObjectHash # Gets an MD5 equvialent of the PlatformObject via converted JSON string
+###########
+function global:Get-PlatformObjectHash
+{
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The Platform Object to get the MD5 hash.")]
+        [PSCustomObject]$PlatformObject
+    )
+
+    # convert the platformobject to JSON string
+    $JsonString = $PlatformObject | ConvertTo-Json -Depth 100 -Compress
+
+    # convert to md5 hash
+    $md5  = New-Object System.Security.Cryptography.MD5CryptoServiceProvider
+    $utf8 = New-Object System.Text.UTF8Encoding
+    $hash = [System.BitConverter]::ToString($md5.ComputeHash($utf8.GetBytes($JsonString)))
+
+    # change to lowercase and remove hyphens
+    $hash = $hash.ToLower() -replace '-', ''
+
+    return $hash
+}# function global:Get-PlatformObjectHash
+#endregion
+###########
+
+###########
 #region ### global:TEMPLATE # TEMPLATE
 ###########
 #function global:Invoke-TEMPLATE
@@ -3031,6 +3059,75 @@ function global:ConvertTo-MigratedCredential
 ###########
 
 ###########
+#region ### global:Prepare-PlatformRoleBank # TEMPLATE
+###########
+function global:Prepare-PlatformRoleBank
+{
+    <#
+    .SYNOPSIS
+    Gets Sets from the Platform with their members for storage and use later.
+
+    .DESCRIPTION
+    This cmdlet will retrieve the IDs of all Set objects in the tenant, then get the member IDs of all
+    set objects to be used in the $SetBank global variable 
+
+    .PARAMETER Multithreaded
+    Performs the gets using multithreading, which may improve get times.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function sets a global variable $SetBank that contains all Set information.
+
+    .EXAMPLE
+    C:\PS> Prepare-PlatformSetBank
+    Gets all Set IDs and member IDs from the Platform and sets it in $SetBank.
+
+    .EXAMPLE
+    C:\PS> Prepare-PlatformSetBank -Multithreaded
+    Gets all Set IDs and member IDs from the Platform and sets it in $SetBank. May perform faster
+    because of multithreading. Might be a quicker option for Platforms with larger numbers of sets.
+
+    .EXAMPLE
+    #>
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $false, HelpMessage = "Export the SetBank.",ParameterSetName="Export")]
+        [Switch]$Export,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Load the SetBank from a local file.",ParameterSetName="Load")]
+        [Switch]$Load
+    )
+
+    if ($Export.IsPresent)
+    {
+        $global:RoleBank | Export-Clixml .\PlatformRoleBank.xml
+        return
+    }
+
+    if ($Load.IsPresent)
+    {
+        $global:RoleBank = Import-Clixml .\PlatformRoleBank.xml
+        return
+    }
+
+    $RoleBank = New-Object System.Collections.ArrayList
+
+    $roles = Get-PlatformRole
+
+    foreach ($role in $roles)
+    {
+        $RoleBank.Add($role) | Out-Null
+    }
+
+    $global:RoleBank = $RoleBank
+}# function global:Prepare-PlatformRoleBank
+#endregion
+###########
+
+###########
 #region ### global:Prepare-PlatformSetBank # TEMPLATE
 ###########
 function global:Prepare-PlatformSetBank
@@ -3177,6 +3274,114 @@ function global:Prepare-PlatformSetBank
 ###########
 
 ###########
+#region ### global:Prepare-FullPlatformSetBank # Prepares a full PlatformSetBank to better support other GETS
+###########
+function global:Prepare-FullPlatformSetBank
+{
+    <#
+    .SYNOPSIS
+    Gets PlatformSet objects from the Platform with their members for storage and use later.
+
+    .DESCRIPTION
+    This cmdlet will retrieve all the PlatformSet objects in the tenant.
+
+    .INPUTS
+    None. You can't redirect or pipe input to this function.
+
+    .OUTPUTS
+    This function sets a global variable $PlatformSetBank that contains all Set information.
+
+    .EXAMPLE
+    C:\PS> Prepare-FullPlatformSetBank
+    Gets all the PlatformSet objects in the Platform and stores it in the global $PlatformSetBank variable.
+    #>
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $false, HelpMessage = "Export the SetBank.",ParameterSetName="Export")]
+        [Switch]$Export,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Load the SetBank from a local file.",ParameterSetName="Load")]
+        [Switch]$Load
+    )
+
+    if ($Export.IsPresent)
+    {
+        $global:PlatformSetBank | Export-Clixml .\FullPlatformSetBank.xml
+        return
+    }
+
+    if ($Load.IsPresent)
+    {
+        $global:PlatformSetBank = Import-Clixml .\FullPlatformSetBank.xml
+        return
+    }
+
+    [runspacefactory]::CreateRunspacePool()
+    $RunspacePool = [runspacefactory]::CreateRunspacePool(1,12)
+    $RunspacePool.Open()
+
+    $Jobs = New-Object System.Collections.ArrayList
+    $PlatformSetBank = New-Object System.Collections.ArrayList
+
+    $SetIds = Query-VaultRedRock -SQLQuery "Select ID from Sets WHERE CollectionType = 'ManualBucket'" | Select-Object -ExpandProperty ID
+    
+    foreach ($setid in $SetIds)
+    {
+        $PowerShell = [PowerShell]::Create()
+        $PowerShell.RunspacePool = $RunspacePool
+
+        # Counter for the setid objects
+        $g++; Write-Progress -Activity "Getting Sets" -Status ("{0} out of {1} Complete" -f $g,$SetIds.Count) -PercentComplete ($g/($SetIds | Measure-Object | Select-Object -ExpandProperty Count)*100)
+            
+        # this works to pass PlatformPlus into 
+        [void]$PowerShell.AddScript((Get-Content ".\PlatformPlus.ps1" -Raw))
+        [void]$PowerShell.AddScript(
+        {
+
+        Param
+        (
+            $PlatformConnection,
+            $SessionInformation,
+            $SetID
+        )
+        $global:PlatformConnection = $PlatformConnection
+        $global:SessionInformation = $SessionInformation
+
+        $obj = Get-PlatformSet -Uuid $setid
+
+        return $obj
+
+        })# [void]$PowerShell.AddScript(
+        [void]$PowerShell.AddParameter('PlatformConnection',$global:PlatformConnection)
+        [void]$PowerShell.AddParameter('SessionInformation',$global:SessionInformation)
+        [void]$PowerShell.AddParameter('SetID',$setid)
+
+        $JobObject = @{}
+        $JobObject.Runspace   = $PowerShell.BeginInvoke()
+        $JobObject.PowerShell = $PowerShell
+
+        $Jobs.Add($JobObject) | Out-Null
+    }# foreach ($setid in $SetIds)
+
+    foreach ($job in $jobs)
+    {
+        # Counter for the job objects
+        $p++; Write-Progress -Activity "Processing Sets" -Status ("{0} out of {1} Complete" -f $p,$jobs.Count) -PercentComplete ($p/($jobs | Measure-Object | Select-Object -ExpandProperty Count)*100)
+        
+        $PlatformSetBank.Add($job.powershell.EndInvoke($job.RunSpace)) | Out-Null
+        $job.PowerShell.Dispose()
+    }
+
+    # converting back to PlatformSet because multithreaded objects return an Automation object Type
+    $returned = ConvertFrom-JsonToPlatformSet -JSONSets $platformSetBank    
+
+    $global:PlatformFullSetBank = $returned
+}# function global:Prepare-PlatformSetBank
+#endregion
+###########
+
+###########
 #region ### global:Get-PlatformSetDiagram # Initial work for a way to display Set information in a more visual manner
 ###########
 function global:Get-PlatformSetDiagram
@@ -3239,6 +3444,31 @@ function global:Get-PlatformSetDiagram
 ###########
 #function global:Invoke-TEMPLATE
 #{
+    <#
+    .SYNOPSIS
+    Gets PlatformSet objects from the Platform with their members for storage and use later.
+
+    .DESCRIPTION
+    This cmdlet will retrieve all the PlatformSet objects in the tenant.
+
+    .INPUTS
+    None. You can
+
+    .OUTPUTS
+    This function sets a global variable $PlatformSetBank that contains all Set information.
+
+    .EXAMPLE
+    C:\PS> Prepare-FullPlatformSetBank
+    Gets all the PlatformSet objects in the Platform and stores it in the global $PlatformSetBank variable.
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param
+    (
+        [Parameter(Mandatory = $false, HelpMessage = "Export the SetBank.",ParameterSetName="Export")]
+        [Switch]$Export,
+
+        [Parameter(Mandatory = $false, HelpMessage = "Load the SetBank from a local file.",ParameterSetName="Load")]
+        [Switch]$Load
+    )#>
 #}# function global:Invoke-TEMPLATE
 #endregion
 ###########
@@ -3971,6 +4201,22 @@ class PlatformAccount
         }
         return $false
     }# [System.Boolean] ManageAccount()
+
+    [PSCustomObject]exportPermissions()
+    {
+        $PrincipalAccess = New-Object System.Collections.ArrayList
+
+        foreach ($permission in $this.PermissionRowAces)
+        {
+            $obj = New-Object PrincipalAccess -ArgumentList ($this.SSName, $this.AccountType, $permission.PrincipalName, `
+                                                             $permission.PrincipalType, $permission.isInherited, `
+                                                             $permission.PlatformPermission.GrantString)
+            
+            $PrincipalAccess.Add($obj) | Out-Null
+        }# foreach ($permission in $this.PermissionRowAces)
+
+        return $PrincipalAccess
+    }# [PSCustomObject]exportPermissions()
 }# class PlatformAccount
 
 # class to hold Systems
@@ -4146,6 +4392,29 @@ class PlatformRoleMember
         $this.Type = $roleMember.Type
     }# PlatformRoleMember($roleMember)
 }# class PlatformRoleMember
+
+class PrincipalAccess
+{
+    [System.String]$Name
+    [System.String]$Type
+    [System.String]$PrincipalName
+    [System.String]$PrincipalType
+    [System.Boolean]$isInherited
+    [System.String]$Permissions
+    
+    PrincipalAccess () {}
+
+    PrincipalAccess ([System.String]$n, [System.String]$t, [System.String]$pn, `
+                     [System.String]$pt, [System.Boolean]$ii, [System.String]$perms)
+    {
+        $this.Name          = $n
+        $this.Type          = $t
+        $this.PrincipalName = $pn
+        $this.PrincipalType = $pt
+        $this.isInherited   = $ii
+        $this.Permissions   = $perms
+    }# PrincipalAccess ([System.String]$n, [System.String]$t, [System.String]$i, `
+}# class PrincipalAccess
 
 # class to hold Role Assigned Administrative Rights
 class PlatformRoleAssignedRights
@@ -4363,10 +4632,11 @@ class MigratedCredential
         {
             'Local' 
             {
-                $query = Query-VaultRedRock -SQLQuery ("Select FQDN FROM Server WHERE ID = '{0}'" -f $pa.SourceID)
+                #$query = Query-VaultRedRock -SQLQuery ("Select FQDN FROM Server WHERE ID = '{0}'" -f $pa.SourceID)
                 if ($pa.ComputerClass -eq "Windows") { $this.SecretTemplate = "Windows Account" }
                 if ($pa.ComputerClass -eq "Unix")    { $this.SecretTemplate = "Unix Account (SSH)" }
-                $FQDN = $query.FQDN
+                #$FQDN = $query.FQDN
+                $FQDN = $pa.SourceName
                 break
             }
             'Domain'
